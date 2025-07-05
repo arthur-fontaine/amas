@@ -10,6 +10,11 @@ default-run  = "lapce"
 [dependencies]
 lapce-app   = { path = "./lapce-app" }
 lapce-proxy = { path = "./lapce-proxy" }
+amas-app    = { path = "./amas-app" }
+
+[[bin]]
+name = "amas"
+path = "amas-app/src/bin/amas.rs"
 
 [[bin]]
 name = "lapce"
@@ -20,7 +25,7 @@ name = "lapce-proxy"
 path = "lapce-proxy/src/bin/lapce-proxy.rs"
 
 [workspace]
-members = ["lapce-app", "lapce-proxy", "lapce-rpc", "lapce-core"]
+members = ["lapce-app", "lapce-proxy", "lapce-rpc", "lapce-core", "amas-app"]
 
 [workspace.package]
 version      = "0.4.3"

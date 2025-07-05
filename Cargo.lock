@@ -95,6 +95,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0942ffc6dcaadf03badf6e6a2d0228460359d5e34b57ccdc720b7382dfbd5ec5"
 
 [[package]]
+name = "amas-app"
+version = "0.4.3"
+dependencies = [
+ "floem",
+]
+
+[[package]]
 name = "ambient-authority"
 version = "0.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3006,6 +3013,7 @@ dependencies = [
 name = "lapce"
 version = "0.4.3"
 dependencies = [
+ "amas-app",
  "lapce-app",
  "lapce-proxy",
 ]
