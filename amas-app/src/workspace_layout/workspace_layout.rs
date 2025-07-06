@@ -1,5 +1,6 @@
 use crate::workspace_graph::WorkspaceGraph;
 
+#[derive(Clone, Debug)]
 pub struct WorkspaceLayout {
     pub(super) workspace_graph: WorkspaceGraph,
 }

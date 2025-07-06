@@ -8,12 +8,9 @@ impl super::workspace_layout::WorkspaceLayout {
     pub fn draw(
         &self,
         cx: &mut floem::context::PaintCx<'_>,
-        size: floem::kurbo::Size,
+        _size: floem::kurbo::Size,
     ) -> () {
         let positions = self.calculate_positions();
-
-        // Background color
-        cx.fill(&Rect::ZERO.with_size(size), css::PURPLE, 0.);
 
         // Draw edges
         for pos in positions.iter() {
