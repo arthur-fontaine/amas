@@ -39,7 +39,7 @@ impl super::workspace_layout::WorkspaceLayout {
 
             let mut text_layout = TextLayout::new();
             text_layout.set_text(
-                &file.name,
+                &file.name.split('/').last().unwrap_or(&file.name),
                 AttrsList::new(Attrs::new().family(&[FamilyOwned::SansSerif])),
             );
             cx.draw_text(&text_layout, (pos.1.x, pos.1.y));
