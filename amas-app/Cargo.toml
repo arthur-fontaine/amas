@@ -9,3 +9,6 @@ authors.workspace = true
 
 [dependencies]
 floem.workspace = true
+ordered-float = "5.0.0"
+petgraph = "0.8.2"
+rand = "0.9.1"
