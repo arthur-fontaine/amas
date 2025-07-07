@@ -64,4 +64,12 @@ impl WorkspaceLayout {
             .hovered_file
             .set(self.get_file_at_position(x, y));
     }
+
+    pub fn get_hovered_file(&self) -> Option<String> {
+        self.selection_state.hovered_file.get().clone()
+    }
+
+    pub fn get_selected_files(&self) -> HashSet<String> {
+        self.selection_state.selected_files.get().clone()
+    }
 }

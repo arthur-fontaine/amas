@@ -1,6 +1,7 @@
 use floem::{
     IntoView,
     event::{Event, EventListener, EventPropagation},
+    prelude::SignalGet,
     views::{Decorators, canvas, dyn_view},
 };
 
@@ -63,6 +64,13 @@ fn app_view() -> impl IntoView {
         move |event| {
             if let Event::PinchGesture(pinch_event) = event {
                 layout.zoom(pinch_event.delta);
+
+                // When we zoomed at maximum zoom level, we can open the file we are hovering over
+                if layout.view_state.zoom.get() == 3.5 && pinch_event.delta > 0.0 {
+                    layout.get_hovered_file().map(|file_name| {
+                        println!("TODO Open file: {}", file_name);
+                    });
+                }
             }
             EventPropagation::Continue
         }
@@ -81,6 +89,15 @@ fn app_view() -> impl IntoView {
         let layout = layout.clone();
         move |_event| {
             layout.select_file_hovered_file();
+            EventPropagation::Continue
+        }
+    })
+    .on_event(EventListener::DoubleClick, {
+        let layout = layout.clone();
+        move |_event| {
+            layout.get_hovered_file().map(|file_name| {
+                println!("TODO Open file: {}", file_name);
+            });
             EventPropagation::Continue
         }
     })
