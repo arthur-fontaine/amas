@@ -78,6 +78,7 @@ lapce-xi-rope = { version = "0.3.2", features = ["serde"] }
 lapce-core  = { path = "./lapce-core" }
 lapce-rpc   = { path = "./lapce-rpc" }
 lapce-proxy = { path = "./lapce-proxy" }
+lapce-app = { path = "./lapce-app" }
 
 floem = { git = "https://github.com/lapce/floem", rev = "2055dde9833699b65ff052eb63cadbddec91c7ce", features = ["editor", "serde", "default-image-formats", "rfd-async-std"] }
 # floem = { path = "../floem", features = ["editor", "serde", "default-image-formats", "rfd-async-std"] }

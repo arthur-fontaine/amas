@@ -98,7 +98,19 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 name = "amas-app"
 version = "0.4.3"
 dependencies = [
+ "anyhow",
+ "backtrace",
+ "clap",
+ "crossbeam-channel",
  "floem",
+ "im",
+ "interprocess",
+ "lapce-app",
+ "lapce-core",
+ "lapce-proxy",
+ "lapce-rpc",
+ "lsp-types",
+ "notify",
  "ordered-float 5.0.0",
  "oxc",
  "oxc_allocator",
@@ -109,7 +121,20 @@ dependencies = [
  "oxc_span",
  "petgraph",
  "rand 0.9.1",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "strum 0.27.1",
+ "tar",
+ "tempfile",
+ "tracing 0.2.0",
+ "tracing-appender",
+ "tracing-subscriber",
+ "url",
  "walkdir",
+ "zip",
+ "zstd",
 ]
 
 [[package]]
