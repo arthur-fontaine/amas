@@ -88,17 +88,25 @@ impl WorkspaceLayout {
     pub fn zoom(&self, factor: f64) {
         let mouse_x = self.view_state.mouse_position_x.get();
         let mouse_y = self.view_state.mouse_position_y.get();
-        let prev_zoom = self.view_state.zoom.get();
-        let new_zoom = (prev_zoom + factor).clamp(0.1, 10.0);
+        let old_zoom = self.view_state.zoom.get();
+        let new_zoom = (old_zoom + factor).clamp(0.1, 3.0);
+
+        if old_zoom == new_zoom {
+            return;
+        }
+
+        let old_tx = self.view_state.translation_x.get();
+        let old_ty = self.view_state.translation_y.get();
+
+        // Calculate the point in world space under the mouse
+        let world_x = (mouse_x - old_tx) / old_zoom;
+        let world_y = (mouse_y - old_ty) / old_zoom;
+
+        // Calculate new translation to keep the same world point under the mouse
+        let new_tx = mouse_x - world_x * new_zoom;
+        let new_ty = mouse_y - world_y * new_zoom;
+
         self.view_state.zoom.set(new_zoom);
-
-        let tx = self.view_state.translation_x.get();
-        let ty = self.view_state.translation_y.get();
-
-        let scale = new_zoom / prev_zoom;
-        let new_tx = (tx - mouse_x) * scale + mouse_x;
-        let new_ty = (ty - mouse_y) * scale + mouse_y;
-
         self.view_state.translation_x.set(new_tx);
         self.view_state.translation_y.set(new_ty);
     }

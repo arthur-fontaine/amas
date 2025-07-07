@@ -10,14 +10,23 @@ impl super::workspace_layout::WorkspaceLayout {
         cx: &mut floem::context::PaintCx<'_>,
         _size: floem::kurbo::Size,
     ) -> () {
+        let zoom = self.view_state.zoom.get() as f32;
+        let translation_x = self.view_state.translation_x.get() as f32;
+        let translation_y = self.view_state.translation_y.get() as f32;
+
         let positions = self.calculate_positions();
 
         // Draw edges
         for pos in positions.iter() {
             let pos_u = &pos.1;
             for pos_v in &pos.2 {
+                let x1 = pos_u.x * zoom + translation_x;
+                let y1 = pos_u.y * zoom + translation_y;
+                let x2 = pos_v.x * zoom + translation_x;
+                let y2 = pos_v.y * zoom + translation_y;
+
                 cx.stroke(
-                    &Line::new((pos_u.x, pos_u.y), (pos_v.x, pos_v.y)),
+                    &Line::new((x1, y1), (x2, y2)),
                     css::WHITE,
                     &Stroke::new(4.0),
                 );
@@ -27,19 +36,22 @@ impl super::workspace_layout::WorkspaceLayout {
         // Draw nodes
         for pos in positions.iter() {
             let file = pos.0;
+            let x = pos.1.x * zoom + translation_x;
+            let y = pos.1.y * zoom + translation_y;
+            let size = 40.0 * zoom;
+
             let rect = Rect::from_origin_size(
-                (pos.1.x - 20.0, pos.1.y - 20.0),
-                (40.0, 40.0),
+                (x - size / 2.0, y - size / 2.0),
+                (size as f64, size as f64),
             );
             cx.fill(&rect, css::BLUE, 0.0);
-            // cx.fill_text(&file.name, (pos.x - 20.0, pos.y - 20.0), css::WHITE, 12.0);
 
             let mut text_layout = TextLayout::new();
             text_layout.set_text(
                 &file.name.split('/').last().unwrap_or(&file.name),
                 AttrsList::new(Attrs::new().family(&[FamilyOwned::SansSerif])),
             );
-            cx.draw_text(&text_layout, (pos.1.x, pos.1.y));
+            cx.draw_text(&text_layout, (x, y));
         }
     }
 }

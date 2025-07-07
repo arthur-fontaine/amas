@@ -25,21 +25,13 @@ fn app_view() -> impl IntoView {
     dyn_view({
         let layout = layout.clone();
         move || {
-            let translation_x = layout.view_state.translation_x.get();
-            let translation_y = layout.view_state.translation_y.get();
-            let zoom = layout.view_state.zoom.get();
             canvas({
                 let layout = layout.clone();
                 move |cx, size| {
                     layout.draw(cx, size);
                 }
             })
-            .style(move |s| {
-                s.size_full()
-                    .translate_x(translation_x)
-                    .translate_y(translation_y)
-                    .scale((zoom * 100.0) as f32)
-            })
+            .style(move |s| s.size_full())
         }
     })
     .style(move |s| s.size_full())
