@@ -75,4 +75,16 @@ fn app_view() -> impl IntoView {
             EventPropagation::Continue
         }
     })
+    .on_event(EventListener::PointerWheel, {
+        let layout = layout.clone();
+        move |event| {
+            if let Event::PointerWheel(pointer_wheel_event) = event {
+                layout.move_(
+                    pointer_wheel_event.delta.x as f64,
+                    pointer_wheel_event.delta.y as f64,
+                );
+            }
+            EventPropagation::Continue
+        }
+    })
 }

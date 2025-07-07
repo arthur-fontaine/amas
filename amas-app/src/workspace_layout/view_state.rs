@@ -102,4 +102,9 @@ impl WorkspaceLayout {
         self.view_state.translation_x.set(new_tx);
         self.view_state.translation_y.set(new_ty);
     }
+
+    pub fn move_(&self, dx: f64, dy: f64) {
+        self.view_state.translation_x.update(|x| *x += dx);
+        self.view_state.translation_y.update(|y| *y += dy);
+    }
 }
