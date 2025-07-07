@@ -89,7 +89,8 @@ impl WorkspaceLayout {
         let mouse_x = self.view_state.mouse_position_x.get();
         let mouse_y = self.view_state.mouse_position_y.get();
         let old_zoom = self.view_state.zoom.get();
-        let new_zoom = (old_zoom + factor).clamp(0.1, 3.0);
+        let zoom_factor = 1.0 + factor * 1.0;
+        let new_zoom = (old_zoom * zoom_factor).clamp(0.1, 3.5);
 
         if old_zoom == new_zoom {
             return;
