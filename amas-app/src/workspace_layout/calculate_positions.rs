@@ -4,16 +4,16 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Position {
-    pub x: f32,
-    pub y: f32,
+    pub x: f64,
+    pub y: f64,
 }
 
 impl Position {
-    fn new(x: f32, y: f32) -> Self {
+    fn new(x: f64, y: f64) -> Self {
         Position { x, y }
     }
 
-    fn distance(&self, other: &Position) -> f32 {
+    fn distance(&self, other: &Position) -> f64 {
         ((self.x - other.x).powi(2) + (self.y - other.y).powi(2)).sqrt()
     }
 }
@@ -50,18 +50,18 @@ impl super::workspace_layout::WorkspaceLayout {
 
 struct ForceDirectedLayout {
     positions: HashMap<NodeIndex, Position>,
-    width: f32,
-    height: f32,
-    k: f32,
-    temperature: f32,
-    cooling_factor: f32,
+    width: f64,
+    height: f64,
+    k: f64,
+    temperature: f64,
+    cooling_factor: f64,
 }
 
 impl ForceDirectedLayout {
     fn new(
         graph: &petgraph::Graph<File, f64, petgraph::Undirected>,
-        width: f32,
-        height: f32,
+        width: f64,
+        height: f64,
     ) -> Self {
         let mut positions = HashMap::new();
 
@@ -69,16 +69,16 @@ impl ForceDirectedLayout {
         let center_y = height / 2.0;
         let radius = width.min(height) / 2.5;
 
-        let total = graph.node_count() as f32;
+        let total = graph.node_count();
         for (i, node_idx) in graph.node_indices().enumerate() {
-            let angle = (i as f32 / total) * std::f32::consts::TAU;
+            let angle = (i as f64 / total as f64) * std::f64::consts::TAU;
             let x = center_x + radius * angle.cos();
             let y = center_y + radius * angle.sin();
             positions.insert(node_idx, Position::new(x, y));
         }
 
         let area = width * height;
-        let k = (area / total).sqrt();
+        let k = (area / total as f64).sqrt();
 
         ForceDirectedLayout {
             positions,
@@ -90,19 +90,19 @@ impl ForceDirectedLayout {
         }
     }
 
-    fn calculate_repulsive_force(&self, distance: f32) -> f32 {
+    fn calculate_repulsive_force(&self, distance: f64) -> f64 {
         if distance == 0.0 {
             return 1000.0;
         }
         (self.k * self.k) / distance
     }
 
-    fn calculate_attractive_force(&self, distance: f32) -> f32 {
+    fn calculate_attractive_force(&self, distance: f64) -> f64 {
         (distance * distance) / self.k
     }
 
     fn iterate(&mut self, graph: &petgraph::Graph<File, f64, petgraph::Undirected>) {
-        let mut displacements: HashMap<NodeIndex, (f32, f32)> =
+        let mut displacements: HashMap<NodeIndex, (f64, f64)> =
             graph.node_indices().map(|n| (n, (0.0, 0.0))).collect();
 
         let nodes: Vec<NodeIndex> = graph.node_indices().collect();

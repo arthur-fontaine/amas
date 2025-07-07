@@ -4,15 +4,17 @@ use floem::{
     text::{Attrs, AttrsList, FamilyOwned, TextLayout},
 };
 
+use crate::file::File;
+
 impl super::workspace_layout::WorkspaceLayout {
     pub fn draw(
         &self,
         cx: &mut floem::context::PaintCx<'_>,
         _size: floem::kurbo::Size,
     ) -> () {
-        let zoom = self.view_state.zoom.get() as f32;
-        let translation_x = self.view_state.translation_x.get() as f32;
-        let translation_y = self.view_state.translation_y.get() as f32;
+        let zoom = self.view_state.zoom.get();
+        let translation_x = self.view_state.translation_x.get();
+        let translation_y = self.view_state.translation_y.get();
 
         let positions = self.calculate_positions();
 
@@ -33,6 +35,7 @@ impl super::workspace_layout::WorkspaceLayout {
             }
         }
 
+        let mut files: Vec<(File, (f64, f64, f64, f64))> = vec![];
         // Draw nodes
         for pos in positions.iter() {
             let file = pos.0;
@@ -52,6 +55,9 @@ impl super::workspace_layout::WorkspaceLayout {
                 AttrsList::new(Attrs::new().family(&[FamilyOwned::SansSerif])),
             );
             cx.draw_text(&text_layout, (x, y));
+
+            files.push((file.clone(), (x - size / 2.0, y - size / 2.0, x + size / 2.0, y + size / 2.0)));
         }
+        self.canva_state.set_files(files);
     }
 }

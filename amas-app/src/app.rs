@@ -1,7 +1,6 @@
 use floem::{
     IntoView,
     event::{Event, EventListener, EventPropagation},
-    prelude::SignalGet as _,
     views::{Decorators, canvas, dyn_view},
 };
 
@@ -54,6 +53,7 @@ fn app_view() -> impl IntoView {
         move |event| {
             if let Some(pointer_position) = event.point() {
                 layout.track_mouse_position(pointer_position.x, pointer_position.y);
+                layout.track_hovered_file(pointer_position.x, pointer_position.y);
             }
             EventPropagation::Continue
         }
@@ -71,11 +71,16 @@ fn app_view() -> impl IntoView {
         let layout = layout.clone();
         move |event| {
             if let Event::PointerWheel(pointer_wheel_event) = event {
-                layout.move_(
-                    pointer_wheel_event.delta.x as f64,
-                    pointer_wheel_event.delta.y as f64,
-                );
+                layout
+                    .move_(pointer_wheel_event.delta.x, pointer_wheel_event.delta.y);
             }
+            EventPropagation::Continue
+        }
+    })
+    .on_event(EventListener::Click, {
+        let layout = layout.clone();
+        move |_event| {
+            layout.select_file_hovered_file();
             EventPropagation::Continue
         }
     })
