@@ -1,4 +1,7 @@
-use floem::IntoView;
+use floem::{
+    IntoView,
+    views::{Decorators, stack},
+};
 
 use crate::{
     editor::Editor,
@@ -18,7 +21,7 @@ fn app_view() -> impl IntoView {
     let mut graph = WorkspaceGraph::new();
     feed_workspace_graph_with_ts_project(&mut graph, "/Users/arthur-fontaine/Developer/code/github.com/arthur-fontaine/mitosis-import-plugin").unwrap();
 
-    let layout = WorkspaceLayout::new(graph, editor);
+    let layout = WorkspaceLayout::new(graph, editor.clone());
 
-    layout
+    stack((editor, layout)).style(|s| s.size_full())
 }
