@@ -129,7 +129,7 @@ impl AppData {
     fn default_window_config(&self) -> WindowConfig {
         WindowConfig::default()
             .apply_default_theme(false)
-            .title("Lapce")
+            .title("Amas")
     }
 
     fn create_windows(
@@ -1594,8 +1594,8 @@ fn window(window_data: WindowData) -> impl View {
             .or_else(|| window_tabs.last())
             .and_then(|(_, window_tab)| window_tab.workspace.display());
         match workspace {
-            Some(workspace) => format!("{workspace} - Lapce"),
-            None => "Lapce".to_string(),
+            Some(workspace) => format!("{workspace} - Amas"),
+            None => "Amas".to_string(),
         }
     })
     .on_event_stop(EventListener::ImeEnabled, move |_| {
@@ -1617,7 +1617,7 @@ fn window(window_data: WindowData) -> impl View {
 }
 
 pub fn launch() {
-    trace!(TraceLevel::INFO, "Starting up Lapce..");
+    trace!(TraceLevel::INFO, "Starting up Amas..");
 
     #[cfg(feature = "vendored-fonts")]
     {
