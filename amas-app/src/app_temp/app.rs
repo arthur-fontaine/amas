@@ -139,147 +139,69 @@ impl AppData {
     ) -> floem::Application {
         let mut app = floem::Application::new();
 
-        let mut inital_windows = 0;
+        let mut info = db.get_window().unwrap_or_else(|_| WindowInfo {
+            size: Size::new(800.0, 600.0),
+            pos: Point::ZERO,
+            maximised: false,
+            tabs: TabsInfo {
+                active_tab: 0,
+                workspaces: vec![LapceWorkspace::default()],
+            },
+        });
+        info.tabs = TabsInfo {
+            active_tab: 0,
+            workspaces: vec![LapceWorkspace::default()],
+        };
+        let config = self
+            .default_window_config()
+            .size(info.size)
+            .position(info.pos);
+        let app_data = self.clone();
+        app = app.window(
+            {
+                let app_data = app_data.clone();
+                move |window_id| {
+                    app_data
+                        .clone()
+                        .into_view(window_id, db.clone(), paths.clone())
+                }
+            },
+            Some(config),
+        );
 
+        app
+    }
+
+    pub fn into_view(
+        &self,
+        window_id: WindowId,
+        db: Arc<LapceDb>,
+        paths: Vec<PathObject>,
+    ) -> impl floem::IntoView + use<> {
         // Split user input into known existing directors and
         // file paths that exist or not
-        let (dirs, files): (Vec<&PathObject>, Vec<&PathObject>) =
+        let (_, files): (Vec<&PathObject>, Vec<&PathObject>) =
             paths.iter().partition(|p| p.is_dir);
 
         let files: Vec<PathObject> = files.into_iter().cloned().collect();
         let mut files = if files.is_empty() { None } else { Some(files) };
 
-        if !dirs.is_empty() {
-            // There were directories specified, so we'll load those as windows
-
-            // Use the last opened window's size and position as the default
-            let (size, mut pos) = db
-                .get_window()
-                .map(|i| (i.size, i.pos))
-                .unwrap_or_else(|_| (Size::new(800.0, 600.0), Point::new(0.0, 0.0)));
-
-            for dir in dirs {
-                #[cfg(windows)]
-                let workspace_type = if !std::env::var("WSL_DISTRO_NAME")
-                    .unwrap_or_default()
-                    .is_empty()
-                    || !std::env::var("WSL_INTEROP").unwrap_or_default().is_empty()
-                {
-                    LapceWorkspaceType::RemoteWSL(crate::workspace::WslHost {
-                        host: String::new(),
-                    })
-                } else {
-                    LapceWorkspaceType::Local
-                };
-                #[cfg(not(windows))]
-                let workspace_type = LapceWorkspaceType::Local;
-
-                let info = WindowInfo {
-                    size,
-                    pos,
-                    maximised: false,
-                    tabs: TabsInfo {
-                        active_tab: 0,
-                        workspaces: vec![LapceWorkspace {
-                            kind: workspace_type,
-                            path: Some(dir.path.to_owned()),
-                            last_open: 0,
-                        }],
-                    },
-                };
-
-                pos += (50.0, 50.0);
-
-                let config = self
-                    .default_window_config()
-                    .size(info.size)
-                    .position(info.pos);
-                let config = if cfg!(target_os = "macos")
-                    || self.config.get_untracked().core.custom_titlebar
-                {
-                    config.show_titlebar(false)
-                } else {
-                    config
-                };
-                let app_data = self.clone();
-                let files = files.take().unwrap_or_default();
-                app = app.window(
-                    move |window_id| app_data.app_view(window_id, info, files),
-                    Some(config),
-                );
-                inital_windows += 1;
-            }
-        } else if files.is_none() {
-            // There were no dirs and no files specified, so we'll load the last windows
-            match db.get_app() {
-                Ok(app_info) => {
-                    for info in app_info.windows {
-                        let config = self
-                            .default_window_config()
-                            .size(info.size)
-                            .position(info.pos);
-                        let config = if cfg!(target_os = "macos")
-                            || self.config.get_untracked().core.custom_titlebar
-                        {
-                            config.show_titlebar(false)
-                        } else {
-                            config
-                        };
-                        let app_data = self.clone();
-                        app = app.window(
-                            move |window_id| {
-                                app_data.app_view(window_id, info, vec![])
-                            },
-                            Some(config),
-                        );
-                        inital_windows += 1;
-                    }
-                }
-                Err(err) => {
-                    tracing::error!("{:?}", err);
-                }
-            }
-        }
-
-        if inital_windows == 0 {
-            let mut info = db.get_window().unwrap_or_else(|_| WindowInfo {
-                size: Size::new(800.0, 600.0),
-                pos: Point::ZERO,
-                maximised: false,
-                tabs: TabsInfo {
-                    active_tab: 0,
-                    workspaces: vec![LapceWorkspace::default()],
-                },
-            });
-            info.tabs = TabsInfo {
+        let mut info = db.get_window().unwrap_or_else(|_| WindowInfo {
+            size: Size::new(800.0, 600.0),
+            pos: Point::ZERO,
+            maximised: false,
+            tabs: TabsInfo {
                 active_tab: 0,
                 workspaces: vec![LapceWorkspace::default()],
-            };
-            let config = self
-                .default_window_config()
-                .size(info.size)
-                .position(info.pos);
-            let config = if cfg!(target_os = "macos")
-                || self.config.get_untracked().core.custom_titlebar
-            {
-                config.show_titlebar(false)
-            } else {
-                config
-            };
-            let app_data = self.clone();
-            app = app.window(
-                move |window_id| {
-                    app_data.app_view(
-                        window_id,
-                        info,
-                        files.take().unwrap_or_default(),
-                    )
-                },
-                Some(config),
-            );
-        }
+            },
+        });
+        info.tabs = TabsInfo {
+            active_tab: 0,
+            workspaces: vec![LapceWorkspace::default()],
+        };
 
-        app
+        let app_data = self.clone();
+        app_data.app_view(window_id, info, files.take().unwrap_or_default())
     }
 
     fn app_view(
