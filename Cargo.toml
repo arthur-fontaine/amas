@@ -17,6 +17,10 @@ name = "amas"
 path = "amas-app/src/bin/amas.rs"
 
 [[bin]]
+name = "app-test"
+path = "amas-app/src/app_temp/bin.rs"
+
+[[bin]]
 name = "lapce"
 path = "lapce-app/src/bin/lapce.rs"
 

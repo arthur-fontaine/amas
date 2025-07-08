@@ -1,10 +1,9 @@
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::{
-    io::{BufReader, IsTerminal, Read, Write},
+    io::{BufReader, IsTerminal, Write},
     ops::Range,
     path::PathBuf,
-    process::Stdio,
     rc::Rc,
     sync::{
         Arc,
@@ -14,7 +13,6 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use clap::Parser;
 use floem::{
     IntoView, View,
     action::show_context_menu,
@@ -53,25 +51,20 @@ use floem::{
 use lapce_core::{
     command::{EditCommand, FocusCommand},
     directory::Directory,
-    meta,
     syntax::{Syntax, highlight::reset_highlight_configs},
 };
 use lapce_rpc::{
-    RpcMessage,
-    core::{CoreMessage, CoreNotification},
-    file::PathObject,
+    core::{CoreMessage, CoreNotification}, file::{LineCol, PathObject}, RpcMessage
 };
 use lsp_types::{CompletionItemKind, MessageType, ShowMessageParams};
-use notify::Watcher;
 use serde::{Deserialize, Serialize};
-use tracing_subscriber::{filter::Targets, reload::Handle};
 
 use lapce_app::{
     about, alert, app::AppCommand, code_action::CodeActionStatus, command::{
         CommandKind, InternalCommand, LapceCommand, LapceWorkbenchCommand,
         WindowCommand,
     }, config::{
-        color::LapceColor, icon::LapceIcons, ui::TabSeparatorHeight, watcher::ConfigWatcher, LapceConfig
+        color::LapceColor, icon::LapceIcons, ui::TabSeparatorHeight, LapceConfig
     }, debug::RunDebugMode, editor::{
         diff::diff_show_more_section_view,
         location::{EditorLocation, EditorPosition},
@@ -82,38 +75,10 @@ use lapce_app::{
         item::{PaletteItem, PaletteItemContent}, PaletteStatus
     }, panel::{position::PanelContainerPosition, view::panel_container_view}, plugin::{plugin_info_view, PluginData}, settings::{settings_view, theme_color_settings_view}, status::status, text_input::TextInputBuilder, title::{title, window_controls_view}, tracing::*, update::ReleaseInfo, window::{TabsInfo, WindowData, WindowInfo}, window_tab::{Focus, WindowTabData}, workspace::{LapceWorkspace, LapceWorkspaceType}
 };
-use super::db::LapceDb;
+use lapce_app::db::LapceDb;
 
 mod grammars;
 mod logging;
-
-#[derive(Parser)]
-#[clap(name = "Lapce")]
-#[clap(version=meta::VERSION)]
-#[derive(Debug)]
-struct Cli {
-    /// Launch new window even if Lapce is already running
-    #[clap(short, long, action)]
-    new: bool,
-    /// Don't return instantly when opened in a terminal
-    #[clap(short, long, action)]
-    wait: bool,
-
-    /// Path(s) to plugins to load.  
-    /// This is primarily used for plugin development to make it easier to test changes to the
-    /// plugin without needing to copy the plugin to the plugins directory.  
-    /// This will cause any plugin with the same author & name to not run.
-    #[clap(long, action)]
-    plugin_path: Vec<PathBuf>,
-
-    /// Paths to file(s) and/or folder(s) to open.
-    /// When path is a file (that exists or not),
-    /// it accepts `path:line:column` syntax
-    /// to specify line and column at which it should open the file
-    #[clap(value_parser = lapce_proxy::cli::parse_file_line_column)]
-    #[clap(value_hint = clap::ValueHint::AnyPath)]
-    paths: Vec<PathObject>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppInfo {
@@ -129,8 +94,6 @@ pub struct AppData {
     pub app_terminated: RwSignal<bool>,
     /// The latest release information
     pub latest_release: RwSignal<Arc<Option<ReleaseInfo>>>,
-    pub watcher: Arc<notify::RecommendedWatcher>,
-    pub tracing_handle: Handle<Targets>,
     pub config: RwSignal<Arc<LapceConfig>>,
     /// Paths to extra plugins to load
     pub plugin_paths: Arc<Vec<PathBuf>>,
@@ -224,9 +187,10 @@ impl AppData {
         match cmd {
             AppCommand::SaveApp => {
                 let db: Arc<LapceDb> = use_context().unwrap();
-                if let Err(err) = db.save_app(self) {
-                    tracing::error!("{:?}", err);
-                }
+                // TODO
+                // if let Err(err) = db.save_app(self) {
+                //     tracing::error!("{:?}", err);
+                // }
             }
             AppCommand::WindowClosed(window_id) => {
                 if self.app_terminated.get_untracked() {
@@ -234,9 +198,10 @@ impl AppData {
                 }
                 let db: Arc<LapceDb> = use_context().unwrap();
                 if self.windows.with_untracked(|w| w.len()) == 1 {
-                    if let Err(err) = db.insert_app(self.clone()) {
-                        tracing::error!("{:?}", err);
-                    }
+                    // TODO
+                    // if let Err(err) = db.insert_app(self.clone()) {
+                    //     tracing::error!("{:?}", err);
+                    // }
                 }
                 let window_data = self
                     .windows
@@ -245,9 +210,10 @@ impl AppData {
                 if let Some(window_data) = window_data {
                     window_data.scope.dispose();
                 }
-                if let Err(err) = db.save_app(self) {
-                    tracing::error!("{:?}", err);
-                }
+                // TODO
+                // if let Err(err) = db.save_app(self) {
+                //     tracing::error!("{:?}", err);
+                // }
             }
             AppCommand::CloseWindow(window_id) => {
                 floem::close_window(window_id);
@@ -2016,27 +1982,6 @@ fn main_split(window_tab_data: Rc<WindowTabData>) -> impl View {
     .debug_name("Main Split")
 }
 
-pub fn not_clickable_icon<S: std::fmt::Display + 'static>(
-    icon: impl Fn() -> &'static str + 'static,
-    active_fn: impl Fn() -> bool + 'static,
-    disabled_fn: impl Fn() -> bool + 'static + Copy,
-    tooltip_: impl Fn() -> S + 'static + Clone,
-    config: ReadSignal<Arc<LapceConfig>>,
-) -> impl View {
-    tooltip_label(
-        config,
-        clickable_icon_base(
-            icon,
-            None::<Box<dyn Fn()>>,
-            active_fn,
-            disabled_fn,
-            config,
-        ),
-        tooltip_,
-    )
-    .debug_name("Not Clickable Icon")
-}
-
 pub fn clickable_icon<S: std::fmt::Display + 'static>(
     icon: impl Fn() -> &'static str + 'static,
     on_click: impl Fn() + 'static,
@@ -3673,13 +3618,6 @@ fn window(window_data: WindowData) -> impl View {
 }
 
 pub fn launch() {
-    let cli = Cli::parse();
-
-    if !cli.wait {
-        logging::panic_hook();
-    }
-
-    let (reload_handle, _guard) = logging::logging();
     trace!(TraceLevel::INFO, "Starting up Lapce..");
 
     #[cfg(feature = "vendored-fonts")]
@@ -3713,66 +3651,6 @@ pub fn launch() {
         load_shell_env();
     }
 
-    // small hack to unblock terminal if launched from it
-    // launch it as a separate process that waits
-    if !cli.wait {
-        let mut args = std::env::args().collect::<Vec<_>>();
-        args.push("--wait".to_string());
-        let mut cmd = std::process::Command::new(&args[0]);
-        #[cfg(target_os = "windows")]
-        cmd.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW);
-
-        let stderr_file_path =
-            Directory::logs_directory().unwrap().join("stderr.log");
-        let stderr_file = std::fs::OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .create(true)
-            .read(true)
-            .open(stderr_file_path)
-            .unwrap();
-        let stderr = Stdio::from(stderr_file);
-
-        let stdout_file_path =
-            Directory::logs_directory().unwrap().join("stdout.log");
-        let stdout_file = std::fs::OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .create(true)
-            .read(true)
-            .open(stdout_file_path)
-            .unwrap();
-        let stdout = Stdio::from(stdout_file);
-
-        if let Err(why) = cmd
-            .args(&args[1..])
-            .stderr(stderr)
-            .stdout(stdout)
-            .env("LAPCE_LOG", "lapce_app::app=error,off")
-            .spawn()
-        {
-            eprintln!("Failed to launch lapce: {why}");
-            std::process::exit(1);
-        };
-        return;
-    }
-
-    // If the cli is not requesting a new window, and we're not developing a plugin, we try to open
-    // in the existing Lapce process
-    if !cli.new {
-        match get_socket() {
-            Ok(socket) => {
-                if let Err(e) = try_open_in_existing_process(socket, &cli.paths) {
-                    trace!(TraceLevel::ERROR, "failed to open path(s): {e}");
-                };
-                return;
-            }
-            Err(err) => {
-                tracing::error!("{:?}", err);
-            }
-        }
-    }
-
     #[cfg(feature = "updater")]
     crate::update::cleanup();
 
@@ -3790,36 +3668,14 @@ pub fn launch() {
         }
     };
     let scope = Scope::new();
+    println!("Provide db");
     provide_context(db.clone());
 
     let window_scale = scope.create_rw_signal(1.0);
     let latest_release = scope.create_rw_signal(Arc::new(None));
     let app_command = Listener::new_empty(scope);
 
-    let plugin_paths = Arc::new(cli.plugin_path);
-
-    let (tx, rx) = channel();
-    let mut watcher = notify::recommended_watcher(ConfigWatcher::new(tx)).unwrap();
-    if let Some(path) = LapceConfig::settings_file() {
-        if let Err(err) = watcher.watch(&path, notify::RecursiveMode::Recursive) {
-            tracing::error!("{:?}", err);
-        }
-    }
-    if let Some(path) = Directory::themes_directory() {
-        if let Err(err) = watcher.watch(&path, notify::RecursiveMode::Recursive) {
-            tracing::error!("{:?}", err);
-        }
-    }
-    if let Some(path) = LapceConfig::keymaps_file() {
-        if let Err(err) = watcher.watch(&path, notify::RecursiveMode::Recursive) {
-            tracing::error!("{:?}", err);
-        }
-    }
-    if let Some(path) = Directory::plugins_directory() {
-        if let Err(err) = watcher.watch(&path, notify::RecursiveMode::Recursive) {
-            tracing::error!("{:?}", err);
-        }
-    }
+    let plugin_paths = Arc::new(vec![]);
 
     let windows = scope.create_rw_signal(im::HashMap::new());
     let config = LapceConfig::load(&LapceWorkspace::default(), &[], &plugin_paths);
@@ -3833,27 +3689,23 @@ pub fn launch() {
         active_window: scope.create_rw_signal(WindowId::from_raw(0)),
         window_scale,
         app_terminated: scope.create_rw_signal(false),
-        watcher: Arc::new(watcher),
         latest_release,
         app_command,
-        tracing_handle: reload_handle,
         config,
         plugin_paths,
     };
 
-    let app = app_data.create_windows(db.clone(), cli.paths);
+    // THIS, is important!
+    let app = app_data.create_windows(
+        db.clone(),
+        vec![PathObject {
+            path: std::path::PathBuf::from("/Users/arthur-fontaine/Developer/code/github.com/arthur-fontaine/mitosis-import-plugin/example/index.html"),
+            is_dir: false,
+            linecol: Option::Some(LineCol { column: 28, line: 12 }),
+        }],
+    );
 
-    {
-        let app_data = app_data.clone();
-        let notification = create_signal_from_channel(rx);
-        create_effect(move |_| {
-            if notification.get().is_some() {
-                tracing::debug!("notification reload_config");
-                app_data.reload_config();
-            }
-        });
-    }
-
+    // Updates grammars and refreshes syntax highlighting if needed
     {
         let cx = Scope::new();
         let app_data = app_data.clone();
@@ -3974,9 +3826,10 @@ pub fn launch() {
     app.on_event(move |event| match event {
         floem::AppEvent::WillTerminate => {
             app_data.app_terminated.set(true);
-            if let Err(err) = db.insert_app(app_data.clone()) {
-                tracing::error!("{:?}", err);
-            }
+            // TODO
+            // if let Err(err) = db.insert_app(app_data.clone()) {
+            //     tracing::error!("{:?}", err);
+            // }
         }
         floem::AppEvent::Reopen {
             has_visible_windows,
@@ -4048,42 +3901,6 @@ pub fn load_shell_env() {
             };
             std::env::set_var(key, value);
         })
-}
-
-pub fn get_socket() -> Result<interprocess::local_socket::LocalSocketStream> {
-    let local_socket = Directory::local_socket()
-        .ok_or_else(|| anyhow!("can't get local socket folder"))?;
-    let socket =
-        interprocess::local_socket::LocalSocketStream::connect(local_socket)?;
-    Ok(socket)
-}
-
-pub fn try_open_in_existing_process(
-    mut socket: interprocess::local_socket::LocalSocketStream,
-    paths: &[PathObject],
-) -> Result<()> {
-    let msg: CoreMessage = RpcMessage::Notification(CoreNotification::OpenPaths {
-        paths: paths.to_vec(),
-    });
-    lapce_rpc::stdio::write_msg(&mut socket, msg)?;
-
-    let (tx, rx) = crossbeam_channel::bounded(1);
-    std::thread::spawn(move || {
-        let mut buf = [0; 100];
-        let received = if let Ok(n) = socket.read(&mut buf) {
-            &buf[..n] == b"received"
-        } else {
-            false
-        };
-        tx.send(received)
-    });
-
-    let received = rx.recv_timeout(std::time::Duration::from_millis(500))?;
-    if !received {
-        return Err(anyhow!("didn't receive response"));
-    }
-
-    Ok(())
 }
 
 fn listen_local_socket(tx: SyncSender<CoreNotification>) -> Result<()> {

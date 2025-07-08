@@ -5,4 +5,4 @@ pub(crate) mod file;
 pub(crate) mod workspace_layout;
 pub(crate) mod editor;
 
-mod app_temp;
+pub mod app_temp;
