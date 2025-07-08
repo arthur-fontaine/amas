@@ -8,74 +8,74 @@ use std::{
     sync::{
         Arc,
         atomic::AtomicU64,
-        mpsc::{SyncSender, channel, sync_channel},
+        mpsc::{SyncSender, sync_channel},
     },
 };
 
 use anyhow::{Result, anyhow};
 use floem::{
     IntoView, View,
-    action::show_context_menu,
     event::{Event, EventListener, EventPropagation},
     ext_event::{create_ext_action, create_signal_from_channel},
-    menu::{Menu, MenuItem},
-    peniko::{
-        Color,
-        kurbo::{Point, Rect, Size},
-    },
-    prelude::SignalTrack,
+    peniko::kurbo::{Point, Rect, Size},
     reactive::{
         ReadSignal, RwSignal, Scope, SignalGet, SignalUpdate, SignalWith,
-        create_effect, create_memo, create_rw_signal, provide_context, use_context,
+        create_effect, create_rw_signal, provide_context,
     },
     style::{
         AlignItems, CursorStyle, Display, FlexDirection, JustifyContent, Position,
         Style,
     },
-    taffy::{
-        Line,
-        style_helpers::{self, auto, fr},
-    },
-    text::{Style as FontStyle, Weight},
+    text::Weight,
     unit::PxPctAuto,
     views::{
-        Decorators, VirtualVector, clip, container, drag_resize_window_area,
-        drag_window_area, dyn_stack,
-        editor::{core::register::Clipboard, text::SystemClipboard},
-        empty, label, rich_text,
-        scroll::{PropagatePointerWheel, VerticalScrollAsHorizontal, scroll},
-        stack, svg, tab, text, tooltip, virtual_stack,
+        Decorators, VirtualVector, container, dyn_stack, empty, rich_text,
+        scroll::{PropagatePointerWheel, scroll},
+        stack, tab, text, virtual_stack,
     },
-    window::{ResizeDirection, WindowConfig, WindowId},
+    window::{WindowConfig, WindowId},
 };
 use lapce_core::{
-    command::{EditCommand, FocusCommand},
     directory::Directory,
     syntax::{Syntax, highlight::reset_highlight_configs},
 };
 use lapce_rpc::{
-    core::{CoreMessage, CoreNotification}, file::{LineCol, PathObject}, RpcMessage
+    RpcMessage,
+    core::{CoreMessage, CoreNotification},
+    file::{LineCol, PathObject},
 };
-use lsp_types::{CompletionItemKind, MessageType, ShowMessageParams};
+use lsp_types::CompletionItemKind;
 use serde::{Deserialize, Serialize};
 
+use lapce_app::db::LapceDb;
 use lapce_app::{
-    about, alert, app::AppCommand, code_action::CodeActionStatus, command::{
-        CommandKind, InternalCommand, LapceCommand, LapceWorkbenchCommand,
-        WindowCommand,
-    }, config::{
-        color::LapceColor, icon::LapceIcons, ui::TabSeparatorHeight, LapceConfig
-    }, debug::RunDebugMode, editor::{
+    about, alert,
+    app::AppCommand,
+    code_action::CodeActionStatus,
+    command::InternalCommand,
+    config::{LapceConfig, color::LapceColor},
+    editor::{
         diff::diff_show_more_section_view,
         location::{EditorLocation, EditorPosition},
         view::editor_container_view,
-    }, editor_tab::{EditorTabChild, EditorTabData}, focus_text::focus_text, id::{EditorTabId, SplitId}, keymap::keymap_view, keypress::keymap::KeyMap, listener::Listener, main_split::{
-        SplitContent, SplitData, SplitDirection, SplitMoveDirection, TabCloseKind,
-    }, markdown::MarkdownContent, palette::{
-        item::{PaletteItem, PaletteItemContent}, PaletteStatus
-    }, panel::{position::PanelContainerPosition, view::panel_container_view}, plugin::{plugin_info_view, PluginData}, settings::{settings_view, theme_color_settings_view}, status::status, text_input::TextInputBuilder, title::{title, window_controls_view}, tracing::*, update::ReleaseInfo, window::{TabsInfo, WindowData, WindowInfo}, window_tab::{Focus, WindowTabData}, workspace::{LapceWorkspace, LapceWorkspaceType}
+    },
+    editor_tab::{EditorTabChild, EditorTabData},
+    focus_text::focus_text,
+    id::{EditorTabId, SplitId},
+    keymap::keymap_view,
+    listener::Listener,
+    main_split::{SplitContent, SplitData, SplitDirection, SplitMoveDirection},
+    markdown::MarkdownContent,
+    panel::position::PanelContainerPosition,
+    plugin::{PluginData, plugin_info_view},
+    settings::{settings_view, theme_color_settings_view},
+    text_input::TextInputBuilder,
+    tracing::*,
+    update::ReleaseInfo,
+    window::{TabsInfo, WindowData, WindowInfo},
+    window_tab::{Focus, WindowTabData},
+    workspace::{LapceWorkspace, LapceWorkspaceType},
 };
-use lapce_app::db::LapceDb;
 
 mod grammars;
 mod logging;
@@ -130,101 +130,6 @@ impl AppData {
         WindowConfig::default()
             .apply_default_theme(false)
             .title("Lapce")
-    }
-
-    pub fn new_window(&self, folder: Option<PathBuf>) {
-        let config = self
-            .active_window()
-            .map(|window| {
-                self.default_window_config()
-                    .size(window.common.size.get_untracked())
-                    .position(window.position.get_untracked() + (50.0, 50.0))
-            })
-            .or_else(|| {
-                let db: Arc<LapceDb> = use_context().unwrap();
-                db.get_window().ok().map(|info| {
-                    self.default_window_config()
-                        .size(info.size)
-                        .position(info.pos)
-                })
-            })
-            .unwrap_or_else(|| {
-                self.default_window_config().size(Size::new(800.0, 600.0))
-            });
-        let config = if cfg!(target_os = "macos")
-            || self.config.get_untracked().core.custom_titlebar
-        {
-            config.show_titlebar(false)
-        } else {
-            config
-        };
-        let workspace = LapceWorkspace {
-            path: folder,
-            ..Default::default()
-        };
-        let app_data = self.clone();
-        floem::new_window(
-            move |window_id| {
-                app_data.app_view(
-                    window_id,
-                    WindowInfo {
-                        size: Size::ZERO,
-                        pos: Point::ZERO,
-                        maximised: false,
-                        tabs: TabsInfo {
-                            active_tab: 0,
-                            workspaces: vec![workspace],
-                        },
-                    },
-                    vec![],
-                )
-            },
-            Some(config),
-        );
-    }
-
-    pub fn run_app_command(&self, cmd: AppCommand) {
-        match cmd {
-            AppCommand::SaveApp => {
-                let db: Arc<LapceDb> = use_context().unwrap();
-                // TODO
-                // if let Err(err) = db.save_app(self) {
-                //     tracing::error!("{:?}", err);
-                // }
-            }
-            AppCommand::WindowClosed(window_id) => {
-                if self.app_terminated.get_untracked() {
-                    return;
-                }
-                let db: Arc<LapceDb> = use_context().unwrap();
-                if self.windows.with_untracked(|w| w.len()) == 1 {
-                    // TODO
-                    // if let Err(err) = db.insert_app(self.clone()) {
-                    //     tracing::error!("{:?}", err);
-                    // }
-                }
-                let window_data = self
-                    .windows
-                    .try_update(|windows| windows.remove(&window_id))
-                    .unwrap();
-                if let Some(window_data) = window_data {
-                    window_data.scope.dispose();
-                }
-                // TODO
-                // if let Err(err) = db.save_app(self) {
-                //     tracing::error!("{:?}", err);
-                // }
-            }
-            AppCommand::CloseWindow(window_id) => {
-                floem::close_window(window_id);
-            }
-            AppCommand::NewWindow { folder } => {
-                self.new_window(folder);
-            }
-            AppCommand::WindowGotFocus(window_id) => {
-                self.active_window.set(window_id);
-            }
-        }
     }
 
     fn create_windows(
@@ -427,113 +332,9 @@ impl AppData {
         let position = window_data.position;
         let window_scale = window_data.window_scale;
         let app_command = window_data.app_command;
-        let config = window_data.config;
         // The KeyDown and PointerDown event handlers both need ownership of a WindowData object.
         let key_down_window_data = window_data.clone();
-        let view = stack((
-            workspace_tab_header(window_data.clone()),
-            window(window_data.clone()),
-            stack((
-                drag_resize_window_area(ResizeDirection::West, empty()).style(|s| {
-                    s.absolute().width(4.0).height_full().pointer_events_auto()
-                }),
-                drag_resize_window_area(ResizeDirection::North, empty()).style(
-                    |s| s.absolute().width_full().height(4.0).pointer_events_auto(),
-                ),
-                drag_resize_window_area(ResizeDirection::East, empty()).style(
-                    move |s| {
-                        s.absolute()
-                            .margin_left(window_size.get().width as f32 - 4.0)
-                            .width(4.0)
-                            .height_full()
-                            .pointer_events_auto()
-                    },
-                ),
-                drag_resize_window_area(ResizeDirection::South, empty()).style(
-                    move |s| {
-                        s.absolute()
-                            .margin_top(window_size.get().height as f32 - 4.0)
-                            .width_full()
-                            .height(4.0)
-                            .pointer_events_auto()
-                    },
-                ),
-                drag_resize_window_area(ResizeDirection::NorthWest, empty()).style(
-                    |s| s.absolute().width(20.0).height(4.0).pointer_events_auto(),
-                ),
-                drag_resize_window_area(ResizeDirection::NorthWest, empty()).style(
-                    |s| s.absolute().width(4.0).height(20.0).pointer_events_auto(),
-                ),
-                drag_resize_window_area(ResizeDirection::NorthEast, empty()).style(
-                    move |s| {
-                        s.absolute()
-                            .margin_left(window_size.get().width as f32 - 20.0)
-                            .width(20.0)
-                            .height(4.0)
-                            .pointer_events_auto()
-                    },
-                ),
-                drag_resize_window_area(ResizeDirection::NorthEast, empty()).style(
-                    move |s| {
-                        s.absolute()
-                            .margin_left(window_size.get().width as f32 - 4.0)
-                            .width(4.0)
-                            .height(20.0)
-                            .pointer_events_auto()
-                    },
-                ),
-                drag_resize_window_area(ResizeDirection::SouthWest, empty()).style(
-                    move |s| {
-                        s.absolute()
-                            .margin_top(window_size.get().height as f32 - 4.0)
-                            .width(20.0)
-                            .height(4.0)
-                            .pointer_events_auto()
-                    },
-                ),
-                drag_resize_window_area(ResizeDirection::SouthWest, empty()).style(
-                    move |s| {
-                        s.absolute()
-                            .margin_top(window_size.get().height as f32 - 20.0)
-                            .width(4.0)
-                            .height(20.0)
-                            .pointer_events_auto()
-                    },
-                ),
-                drag_resize_window_area(ResizeDirection::SouthEast, empty()).style(
-                    move |s| {
-                        s.absolute()
-                            .margin_left(window_size.get().width as f32 - 20.0)
-                            .margin_top(window_size.get().height as f32 - 4.0)
-                            .width(20.0)
-                            .height(4.0)
-                            .pointer_events_auto()
-                    },
-                ),
-                drag_resize_window_area(ResizeDirection::SouthEast, empty()).style(
-                    move |s| {
-                        s.absolute()
-                            .margin_left(window_size.get().width as f32 - 4.0)
-                            .margin_top(window_size.get().height as f32 - 20.0)
-                            .width(4.0)
-                            .height(20.0)
-                            .pointer_events_auto()
-                    },
-                ),
-            ))
-            .debug_name("Drag Resize Areas")
-            .style(move |s| {
-                s.absolute()
-                    .size_full()
-                    .apply_if(
-                        cfg!(target_os = "macos")
-                            || !config.get_untracked().core.custom_titlebar,
-                        |s| s.hide(),
-                    )
-                    .pointer_events_none()
-            }),
-        ))
-        .style(|s| s.flex_col().size_full());
+        let view = window(window_data.clone()).style(|s| s.flex_col().size_full());
         let view_id = view.id();
         app_view_id.set(view_id);
 
@@ -603,547 +404,6 @@ impl AppData {
             })
             .debug_name("App View")
     }
-}
-
-/// The top bar of an Editor tab. Includes the tab forward/back buttons, the tab scroll bar and the new split and tab close all button.
-fn editor_tab_header(
-    window_tab_data: Rc<WindowTabData>,
-    active_editor_tab: ReadSignal<Option<EditorTabId>>,
-    editor_tab: RwSignal<EditorTabData>,
-    dragging: RwSignal<Option<(RwSignal<usize>, EditorTabId)>>,
-) -> impl View {
-    let main_split = window_tab_data.main_split.clone();
-    let plugin = window_tab_data.plugin.clone();
-    let editors = window_tab_data.main_split.editors;
-    let diff_editors = window_tab_data.main_split.diff_editors;
-    let focus = window_tab_data.common.focus;
-    let config = window_tab_data.common.config;
-    let internal_command = window_tab_data.common.internal_command;
-    let workbench_command = window_tab_data.common.workbench_command;
-    let editor_tab_id =
-        editor_tab.with_untracked(|editor_tab| editor_tab.editor_tab_id);
-
-    let editor_tab_active =
-        create_memo(move |_| editor_tab.with(|editor_tab| editor_tab.active));
-    let items = move || {
-        let editor_tab = editor_tab.get();
-        for (i, (index, _, _)) in editor_tab.children.iter().enumerate() {
-            if index.get_untracked() != i {
-                index.set(i);
-            }
-        }
-        editor_tab.children
-    };
-    let key = |(_, _, child): &(RwSignal<usize>, RwSignal<Rect>, EditorTabChild)| {
-        child.id()
-    };
-    let is_focused = move || {
-        if let Focus::Workbench = focus.get() {
-            editor_tab.with_untracked(|e| Some(e.editor_tab_id))
-                == active_editor_tab.get()
-        } else {
-            false
-        }
-    };
-
-    let view_fn = move |(i, layout_rect, child): (
-        RwSignal<usize>,
-        RwSignal<Rect>,
-        EditorTabChild,
-    )| {
-        let local_child = child.clone();
-        let child_for_close = child.clone();
-        let child_for_mouse_close = child.clone();
-        let child_for_mouse_close_2 = child.clone();
-        let main_split = main_split.clone();
-        let plugin = plugin.clone();
-        let child_view = {
-            let info = child.view_info(editors, diff_editors, plugin, config);
-            let hovered = create_rw_signal(false);
-
-            use lapce_app::config::ui::TabCloseButton;
-
-            let tab_icon = container({
-                svg("")
-                    .update_value(move || info.with(|info| info.icon.clone()))
-                    .style(move |s| {
-                        let config = config.get();
-                        let size = config.ui.icon_size() as f32;
-                        s.size(size, size)
-                            .apply_opt(info.with(|info| info.color), |s, c| {
-                                s.color(c)
-                            })
-                            .apply_if(
-                                !info.with(|info| info.is_pristine)
-                                    && config.ui.tab_close_button
-                                        == TabCloseButton::Off,
-                                |s| s.color(config.color(LapceColor::LAPCE_WARN)),
-                            )
-                    })
-            })
-            .style(|s| s.padding(4.));
-
-            let tab_content = tooltip(
-                label(move || info.with(|info| info.name.clone())).style(move |s| {
-                    s.apply_if(
-                        !info
-                            .with(|info| info.confirmed)
-                            .map(|confirmed| confirmed.get())
-                            .unwrap_or(true),
-                        |s| s.font_style(FontStyle::Italic),
-                    )
-                    .selectable(false)
-                }),
-                move || {
-                    tooltip_tip(
-                        config,
-                        text(info.with(|info| {
-                            info.path
-                                .clone()
-                                .map(|path| path.display().to_string())
-                                .unwrap_or("local".to_string())
-                        })),
-                    )
-                },
-            );
-
-            let tab_close_button = clickable_icon(
-                move || {
-                    if hovered.get() || info.with(|info| info.is_pristine) {
-                        LapceIcons::CLOSE
-                    } else {
-                        LapceIcons::UNSAVED
-                    }
-                },
-                move || {
-                    let editor_tab_id =
-                        editor_tab.with_untracked(|t| t.editor_tab_id);
-                    internal_command.send(InternalCommand::EditorTabChildClose {
-                        editor_tab_id,
-                        child: child_for_close.clone(),
-                    });
-                },
-                || false,
-                || false,
-                || "Close",
-                config,
-            )
-            .on_event_stop(EventListener::PointerDown, |_| {})
-            .on_event_stop(EventListener::PointerEnter, move |_| {
-                hovered.set(true);
-            })
-            .on_event_stop(EventListener::PointerLeave, move |_| {
-                hovered.set(false);
-            });
-
-            stack((
-                tab_icon.style(move |s| {
-                    let tab_close_button = config.get().ui.tab_close_button;
-                    s.apply_if(tab_close_button == TabCloseButton::Left, |s| {
-                        s.grid_column(Line {
-                            start: style_helpers::line(3),
-                            end: style_helpers::span(1),
-                        })
-                    })
-                }),
-                tab_content.style(move |s| {
-                    let tab_close_button = config.get().ui.tab_close_button;
-                    s.apply_if(tab_close_button == TabCloseButton::Left, |s| {
-                        s.grid_column(Line {
-                            start: style_helpers::line(2),
-                            end: style_helpers::span(1),
-                        })
-                    })
-                    .apply_if(tab_close_button == TabCloseButton::Off, |s| {
-                        s.padding_right(4.)
-                    })
-                }),
-                tab_close_button.style(move |s| {
-                    let tab_close_button = config.get().ui.tab_close_button;
-                    s.apply_if(tab_close_button == TabCloseButton::Left, |s| {
-                        s.grid_column(Line {
-                            start: style_helpers::line(1),
-                            end: style_helpers::span(1),
-                        })
-                    })
-                    .apply_if(tab_close_button == TabCloseButton::Off, |s| s.hide())
-                }),
-            ))
-            .style(move |s| {
-                s.items_center()
-                    .justify_center()
-                    .border_left(if i.get() == 0 { 1.0 } else { 0.0 })
-                    .border_right(1.0)
-                    .border_color(config.get().color(LapceColor::LAPCE_BORDER))
-                    .padding_horiz(6.)
-                    .gap(6.)
-                    .grid()
-                    .grid_template_columns(vec![auto(), fr(1.), auto()])
-                    .apply_if(
-                        config.get().ui.tab_separator_height
-                            == TabSeparatorHeight::Full,
-                        |s| s.height_full(),
-                    )
-            })
-        };
-
-        let confirmed = match local_child {
-            EditorTabChild::Editor(editor_id) => {
-                editors.editor_untracked(editor_id).map(|e| e.confirmed)
-            }
-            EditorTabChild::DiffEditor(diff_editor_id) => diff_editors
-                .with_untracked(|diff_editors| {
-                    diff_editors
-                        .get(&diff_editor_id)
-                        .map(|diff_editor_data| diff_editor_data.confirmed)
-                }),
-            _ => None,
-        };
-
-        let header_content_size = create_rw_signal(Size::ZERO);
-        let drag_over_left: RwSignal<Option<bool>> = create_rw_signal(None);
-        stack((
-            child_view
-                .on_double_click_stop(move |_| {
-                    if let Some(confirmed) = confirmed {
-                        confirmed.set(true);
-                    }
-                })
-                .on_event(EventListener::PointerDown, move |event| {
-                    if let Event::PointerDown(pointer_event) = event {
-                        if pointer_event.button.is_auxiliary() {
-                            let editor_tab_id =
-                                editor_tab.with_untracked(|t| t.editor_tab_id);
-                            internal_command.send(
-                                InternalCommand::EditorTabChildClose {
-                                    editor_tab_id,
-                                    child: child_for_mouse_close.clone(),
-                                },
-                            );
-                            EventPropagation::Stop
-                        } else {
-                            editor_tab.update(|editor_tab| {
-                                editor_tab.active = i.get_untracked();
-                            });
-                            EventPropagation::Continue
-                        }
-                    } else {
-                        EventPropagation::Continue
-                    }
-                })
-                .on_secondary_click_stop(move |_| {
-                    let editor_tab_id =
-                        editor_tab.with_untracked(|t| t.editor_tab_id);
-
-                    tab_secondary_click(
-                        internal_command,
-                        editor_tab_id,
-                        child_for_mouse_close_2.clone(),
-                    );
-                })
-                .on_event_stop(EventListener::DragStart, move |_| {
-                    dragging.set(Some((i, editor_tab_id)));
-                })
-                .on_event_stop(EventListener::DragEnd, move |_| {
-                    dragging.set(None);
-                })
-                .on_event_stop(EventListener::DragOver, move |event| {
-                    if dragging.with_untracked(|dragging| dragging.is_some()) {
-                        if let Event::PointerMove(pointer_event) = event {
-                            let new_left = pointer_event.pos.x
-                                < header_content_size.get_untracked().width / 2.0;
-                            if drag_over_left.get_untracked() != Some(new_left) {
-                                drag_over_left.set(Some(new_left));
-                            }
-                        }
-                    }
-                })
-                .on_event(EventListener::Drop, move |event| {
-                    if let Some((from_index, from_editor_tab_id)) =
-                        dragging.get_untracked()
-                    {
-                        drag_over_left.set(None);
-                        if let Event::PointerUp(pointer_event) = event {
-                            let left = pointer_event.pos.x
-                                < header_content_size.get_untracked().width / 2.0;
-                            let index = i.get_untracked();
-                            let new_index = if left { index } else { index + 1 };
-                            main_split.move_editor_tab_child(
-                                from_editor_tab_id,
-                                editor_tab_id,
-                                from_index.get_untracked(),
-                                new_index,
-                            );
-                        }
-                        EventPropagation::Stop
-                    } else {
-                        EventPropagation::Continue
-                    }
-                })
-                .on_event_stop(EventListener::DragLeave, move |_| {
-                    drag_over_left.set(None);
-                })
-                .on_resize(move |rect| {
-                    header_content_size.set(rect.size());
-                })
-                .draggable()
-                .dragging_style(move |s| {
-                    let config = config.get();
-                    s.border(1.0)
-                        .border_radius(6.0)
-                        .background(
-                            config
-                                .color(LapceColor::PANEL_BACKGROUND)
-                                .multiply_alpha(0.7),
-                        )
-                        .border_color(config.color(LapceColor::LAPCE_BORDER))
-                })
-                .style(|s| s.align_items(Some(AlignItems::Center))),
-            empty()
-                .style(move |s| {
-                    s.size_full()
-                        .border_bottom(if editor_tab_active.get() == i.get() {
-                            2.0
-                        } else {
-                            0.0
-                        })
-                        .border_color(config.get().color(if is_focused() {
-                            LapceColor::LAPCE_TAB_ACTIVE_UNDERLINE
-                        } else {
-                            LapceColor::LAPCE_TAB_INACTIVE_UNDERLINE
-                        }))
-                })
-                .style(|s| {
-                    s.absolute()
-                        .padding_horiz(3.0)
-                        .size_full()
-                        .pointer_events_none()
-                })
-                .debug_name("Drop Indicator"),
-            empty()
-                .style(move |s| {
-                    let i = i.get();
-                    let drag_over_left = drag_over_left.get();
-                    s.absolute()
-                        .margin_left(if i == 0 { 0.0 } else { -2.0 })
-                        .height_full()
-                        .width(
-                            header_content_size.get().width as f32
-                                + if i == 0 { 1.0 } else { 3.0 },
-                        )
-                        .apply_if(drag_over_left.is_none(), |s| s.hide())
-                        .apply_if(drag_over_left.is_some(), |s| {
-                            if let Some(drag_over_left) = drag_over_left {
-                                if drag_over_left {
-                                    s.border_left(3.0)
-                                } else {
-                                    s.border_right(3.0)
-                                }
-                            } else {
-                                s
-                            }
-                        })
-                        .border_color(
-                            config
-                                .get()
-                                .color(LapceColor::LAPCE_TAB_ACTIVE_UNDERLINE)
-                                .multiply_alpha(0.5),
-                        )
-                })
-                .debug_name("Active Tab Indicator"),
-        ))
-        .on_resize(move |rect| {
-            layout_rect.set(rect);
-        })
-        .style(move |s| {
-            let config = config.get();
-            s.height_full()
-                .flex_col()
-                .items_center()
-                .justify_center()
-                .cursor(CursorStyle::Pointer)
-                .hover(|s| s.background(config.color(LapceColor::HOVER_BACKGROUND)))
-        })
-        .debug_name("Tab and Active Indicator")
-    };
-
-    let content_size = create_rw_signal(Size::ZERO);
-    let scroll_offset = create_rw_signal(Rect::ZERO);
-    stack((
-        stack({
-            let size = create_rw_signal(Size::ZERO);
-            (
-                clip(empty().style(move |s| {
-                    let config = config.get();
-                    s.absolute()
-                        .height_full()
-                        .width(size.get().width as f32)
-                        .background(config.color(LapceColor::PANEL_BACKGROUND))
-                        .box_shadow_blur(3.0)
-                        .box_shadow_color(
-                            config.color(LapceColor::LAPCE_DROPDOWN_SHADOW),
-                        )
-                }))
-                .style(move |s| {
-                    let scroll_offset = scroll_offset.get();
-                    s.absolute()
-                        .width(size.get().width as f32 + 30.0)
-                        .height_full()
-                        .apply_if(scroll_offset.x0 == 0.0, |s| s.hide())
-                }),
-                stack((
-                    clickable_icon(
-                        || LapceIcons::TAB_PREVIOUS,
-                        move || {
-                            workbench_command
-                                .send(LapceWorkbenchCommand::PreviousEditorTab);
-                        },
-                        || false,
-                        || false,
-                        || "Previous Tab",
-                        config,
-                    )
-                    .style(|s| s.margin_horiz(6.0).margin_vert(7.0)),
-                    clickable_icon(
-                        || LapceIcons::TAB_NEXT,
-                        move || {
-                            workbench_command
-                                .send(LapceWorkbenchCommand::NextEditorTab);
-                        },
-                        || false,
-                        || false,
-                        || "Next Tab",
-                        config,
-                    )
-                    .style(|s| s.margin_right(6.0)),
-                ))
-                .on_resize(move |rect| {
-                    size.set(rect.size());
-                })
-                .debug_name("Next/Previoius Tab Buttons")
-                .style(move |s| s.items_center()),
-            )
-        })
-        .style(|s| s.flex_shrink(0.)),
-        container(
-            scroll({
-                dyn_stack(items, key, view_fn)
-                    .on_resize(move |rect| {
-                        let size = rect.size();
-                        if content_size.get_untracked() != size {
-                            content_size.set(size);
-                        }
-                    })
-                    .debug_name("Horizontal Tab Stack")
-                    .style(|s| s.height_full().items_center())
-            })
-            .on_scroll(move |rect| {
-                scroll_offset.set(rect);
-            })
-            .ensure_visible(move || {
-                let active = editor_tab_active.get();
-                editor_tab
-                    .with_untracked(|editor_tab| editor_tab.children[active].1)
-                    .get_untracked()
-            })
-            .scroll_style(|s| s.hide_bars(true))
-            .style(|s| {
-                s.set(VerticalScrollAsHorizontal, true)
-                    .absolute()
-                    .size_full()
-            }),
-        )
-        .style(|s| s.height_full().flex_grow(1.0).flex_basis(0.).min_width(10.))
-        .debug_name("Tab scroll"),
-        stack({
-            let size = create_rw_signal(Size::ZERO);
-            (
-                clip({
-                    empty().style(move |s| {
-                        let config = config.get();
-                        s.absolute()
-                            .height_full()
-                            .margin_left(30.0)
-                            .width(size.get().width as f32)
-                            .background(config.color(LapceColor::PANEL_BACKGROUND))
-                            .box_shadow_blur(3.0)
-                            .box_shadow_color(
-                                config.color(LapceColor::LAPCE_DROPDOWN_SHADOW),
-                            )
-                    })
-                })
-                .style(move |s| {
-                    let content_size = content_size.get();
-                    let scroll_offset = scroll_offset.get();
-                    s.absolute()
-                        .margin_left(-30.0)
-                        .width(size.get().width as f32 + 30.0)
-                        .height_full()
-                        .apply_if(scroll_offset.x1 >= content_size.width, |s| {
-                            s.hide()
-                        })
-                }),
-                stack((
-                    clickable_icon(
-                        || LapceIcons::SPLIT_HORIZONTAL,
-                        move || {
-                            let editor_tab_id =
-                                editor_tab.with_untracked(|t| t.editor_tab_id);
-                            internal_command.send(InternalCommand::Split {
-                                direction: SplitDirection::Vertical,
-                                editor_tab_id,
-                            });
-                        },
-                        || false,
-                        || false,
-                        || "Split Horizontally",
-                        config,
-                    )
-                    .style(|s| s.margin_left(6.0)),
-                    clickable_icon(
-                        || LapceIcons::CLOSE,
-                        move || {
-                            let editor_tab_id =
-                                editor_tab.with_untracked(|t| t.editor_tab_id);
-                            internal_command.send(InternalCommand::EditorTabClose {
-                                editor_tab_id,
-                            });
-                        },
-                        || false,
-                        || false,
-                        || "Close All",
-                        config,
-                    )
-                    .style(|s| s.margin_horiz(6.0)),
-                ))
-                .on_resize(move |rect| {
-                    size.set(rect.size());
-                })
-                .style(|s| s.items_center().height_full()),
-            )
-        })
-        .debug_name("Split/Close Panel Buttons")
-        .style(move |s| {
-            let content_size = content_size.get();
-            let scroll_offset = scroll_offset.get();
-            s.height_full()
-                .flex_shrink(0.)
-                .margin_left(PxPctAuto::Auto)
-                .apply_if(scroll_offset.x1 < content_size.width, |s| {
-                    s.margin_left(0.)
-                })
-        }),
-    ))
-    .style(move |s| {
-        let config = config.get();
-        s.items_center()
-            .max_width_full()
-            .border_bottom(1.0)
-            .border_color(config.color(LapceColor::LAPCE_BORDER))
-            .background(config.color(LapceColor::PANEL_BACKGROUND))
-            .height(config.ui.header_height() as i32)
-    })
-    .debug_name("Editor Tab Header")
 }
 
 fn editor_tab_content(
@@ -1370,172 +630,160 @@ fn editor_tab(
     let internal_command = main_split.common.internal_command;
     let tab_size = create_rw_signal(Size::ZERO);
     let drag_over: RwSignal<Option<DragOverPosition>> = create_rw_signal(None);
-    stack((
-        editor_tab_header(
+    stack((stack((
+        editor_tab_content(
             window_tab_data.clone(),
+            plugin.clone(),
             active_editor_tab,
             editor_tab,
-            dragging,
         ),
-        stack((
-            editor_tab_content(
-                window_tab_data.clone(),
-                plugin.clone(),
-                active_editor_tab,
-                editor_tab,
-            ),
-            empty()
-                .style(move |s| {
-                    let pos = drag_over.get();
-                    let width = match pos {
-                        Some(pos) => match pos {
-                            DragOverPosition::Top => 100.0,
-                            DragOverPosition::Bottom => 100.0,
-                            DragOverPosition::Left => 50.0,
-                            DragOverPosition::Right => 50.0,
-                            DragOverPosition::Middle => 100.0,
-                        },
-                        None => 100.0,
-                    };
-                    let height = match pos {
-                        Some(pos) => match pos {
-                            DragOverPosition::Top => 50.0,
-                            DragOverPosition::Bottom => 50.0,
-                            DragOverPosition::Left => 100.0,
-                            DragOverPosition::Right => 100.0,
-                            DragOverPosition::Middle => 100.0,
-                        },
-                        None => 100.0,
-                    };
-                    let size = tab_size.get_untracked();
-                    let margin_left = match pos {
-                        Some(pos) => match pos {
-                            DragOverPosition::Top => 0.0,
-                            DragOverPosition::Bottom => 0.0,
-                            DragOverPosition::Left => 0.0,
-                            DragOverPosition::Right => size.width / 2.0,
-                            DragOverPosition::Middle => 0.0,
-                        },
-                        None => 0.0,
-                    };
-                    let margin_top = match pos {
-                        Some(pos) => match pos {
-                            DragOverPosition::Top => 0.0,
-                            DragOverPosition::Bottom => size.height / 2.0,
-                            DragOverPosition::Left => 0.0,
-                            DragOverPosition::Right => 0.0,
-                            DragOverPosition::Middle => 0.0,
-                        },
-                        None => 0.0,
-                    };
-                    s.absolute()
-                        .size_pct(width, height)
-                        .margin_top(margin_top as f32)
-                        .margin_left(margin_left as f32)
-                        .apply_if(pos.is_none(), |s| s.hide())
-                        .background(
-                            config
-                                .get()
-                                .color(LapceColor::EDITOR_DRAG_DROP_BACKGROUND),
-                        )
-                })
-                .debug_name("Drag Over Handle"),
-            empty()
-                .on_event_stop(EventListener::DragOver, move |event| {
-                    if dragging.with_untracked(|dragging| dragging.is_some()) {
-                        if let Event::PointerMove(pointer_event) = event {
-                            let size = tab_size.get_untracked();
-                            let pos = pointer_event.pos;
-                            let new_drag_over = if pos.x < size.width / 4.0 {
-                                DragOverPosition::Left
-                            } else if pos.x > size.width * 3.0 / 4.0 {
-                                DragOverPosition::Right
-                            } else if pos.y < size.height / 4.0 {
-                                DragOverPosition::Top
-                            } else if pos.y > size.height * 3.0 / 4.0 {
-                                DragOverPosition::Bottom
-                            } else {
-                                DragOverPosition::Middle
-                            };
-                            if drag_over.get_untracked() != Some(new_drag_over) {
-                                drag_over.set(Some(new_drag_over));
+        empty()
+            .style(move |s| {
+                let pos = drag_over.get();
+                let width = match pos {
+                    Some(pos) => match pos {
+                        DragOverPosition::Top => 100.0,
+                        DragOverPosition::Bottom => 100.0,
+                        DragOverPosition::Left => 50.0,
+                        DragOverPosition::Right => 50.0,
+                        DragOverPosition::Middle => 100.0,
+                    },
+                    None => 100.0,
+                };
+                let height = match pos {
+                    Some(pos) => match pos {
+                        DragOverPosition::Top => 50.0,
+                        DragOverPosition::Bottom => 50.0,
+                        DragOverPosition::Left => 100.0,
+                        DragOverPosition::Right => 100.0,
+                        DragOverPosition::Middle => 100.0,
+                    },
+                    None => 100.0,
+                };
+                let size = tab_size.get_untracked();
+                let margin_left = match pos {
+                    Some(pos) => match pos {
+                        DragOverPosition::Top => 0.0,
+                        DragOverPosition::Bottom => 0.0,
+                        DragOverPosition::Left => 0.0,
+                        DragOverPosition::Right => size.width / 2.0,
+                        DragOverPosition::Middle => 0.0,
+                    },
+                    None => 0.0,
+                };
+                let margin_top = match pos {
+                    Some(pos) => match pos {
+                        DragOverPosition::Top => 0.0,
+                        DragOverPosition::Bottom => size.height / 2.0,
+                        DragOverPosition::Left => 0.0,
+                        DragOverPosition::Right => 0.0,
+                        DragOverPosition::Middle => 0.0,
+                    },
+                    None => 0.0,
+                };
+                s.absolute()
+                    .size_pct(width, height)
+                    .margin_top(margin_top as f32)
+                    .margin_left(margin_left as f32)
+                    .apply_if(pos.is_none(), |s| s.hide())
+                    .background(
+                        config.get().color(LapceColor::EDITOR_DRAG_DROP_BACKGROUND),
+                    )
+            })
+            .debug_name("Drag Over Handle"),
+        empty()
+            .on_event_stop(EventListener::DragOver, move |event| {
+                if dragging.with_untracked(|dragging| dragging.is_some()) {
+                    if let Event::PointerMove(pointer_event) = event {
+                        let size = tab_size.get_untracked();
+                        let pos = pointer_event.pos;
+                        let new_drag_over = if pos.x < size.width / 4.0 {
+                            DragOverPosition::Left
+                        } else if pos.x > size.width * 3.0 / 4.0 {
+                            DragOverPosition::Right
+                        } else if pos.y < size.height / 4.0 {
+                            DragOverPosition::Top
+                        } else if pos.y > size.height * 3.0 / 4.0 {
+                            DragOverPosition::Bottom
+                        } else {
+                            DragOverPosition::Middle
+                        };
+                        if drag_over.get_untracked() != Some(new_drag_over) {
+                            drag_over.set(Some(new_drag_over));
+                        }
+                    }
+                }
+            })
+            .on_event_stop(EventListener::DragLeave, move |_| {
+                drag_over.set(None);
+            })
+            .on_event(EventListener::Drop, move |_| {
+                if let Some((from_index, from_editor_tab_id)) =
+                    dragging.get_untracked()
+                {
+                    if let Some(pos) = drag_over.get_untracked() {
+                        match pos {
+                            DragOverPosition::Top => {
+                                main_split.move_editor_tab_child_to_new_split(
+                                    from_editor_tab_id,
+                                    from_index.get_untracked(),
+                                    editor_tab_id,
+                                    SplitMoveDirection::Up,
+                                );
+                            }
+                            DragOverPosition::Bottom => {
+                                main_split.move_editor_tab_child_to_new_split(
+                                    from_editor_tab_id,
+                                    from_index.get_untracked(),
+                                    editor_tab_id,
+                                    SplitMoveDirection::Down,
+                                );
+                            }
+                            DragOverPosition::Left => {
+                                main_split.move_editor_tab_child_to_new_split(
+                                    from_editor_tab_id,
+                                    from_index.get_untracked(),
+                                    editor_tab_id,
+                                    SplitMoveDirection::Left,
+                                );
+                            }
+                            DragOverPosition::Right => {
+                                main_split.move_editor_tab_child_to_new_split(
+                                    from_editor_tab_id,
+                                    from_index.get_untracked(),
+                                    editor_tab_id,
+                                    SplitMoveDirection::Right,
+                                );
+                            }
+                            DragOverPosition::Middle => {
+                                main_split.move_editor_tab_child(
+                                    from_editor_tab_id,
+                                    editor_tab_id,
+                                    from_index.get_untracked(),
+                                    editor_tab.with_untracked(|editor_tab| {
+                                        editor_tab.active + 1
+                                    }),
+                                );
                             }
                         }
                     }
-                })
-                .on_event_stop(EventListener::DragLeave, move |_| {
                     drag_over.set(None);
-                })
-                .on_event(EventListener::Drop, move |_| {
-                    if let Some((from_index, from_editor_tab_id)) =
-                        dragging.get_untracked()
-                    {
-                        if let Some(pos) = drag_over.get_untracked() {
-                            match pos {
-                                DragOverPosition::Top => {
-                                    main_split.move_editor_tab_child_to_new_split(
-                                        from_editor_tab_id,
-                                        from_index.get_untracked(),
-                                        editor_tab_id,
-                                        SplitMoveDirection::Up,
-                                    );
-                                }
-                                DragOverPosition::Bottom => {
-                                    main_split.move_editor_tab_child_to_new_split(
-                                        from_editor_tab_id,
-                                        from_index.get_untracked(),
-                                        editor_tab_id,
-                                        SplitMoveDirection::Down,
-                                    );
-                                }
-                                DragOverPosition::Left => {
-                                    main_split.move_editor_tab_child_to_new_split(
-                                        from_editor_tab_id,
-                                        from_index.get_untracked(),
-                                        editor_tab_id,
-                                        SplitMoveDirection::Left,
-                                    );
-                                }
-                                DragOverPosition::Right => {
-                                    main_split.move_editor_tab_child_to_new_split(
-                                        from_editor_tab_id,
-                                        from_index.get_untracked(),
-                                        editor_tab_id,
-                                        SplitMoveDirection::Right,
-                                    );
-                                }
-                                DragOverPosition::Middle => {
-                                    main_split.move_editor_tab_child(
-                                        from_editor_tab_id,
-                                        editor_tab_id,
-                                        from_index.get_untracked(),
-                                        editor_tab.with_untracked(|editor_tab| {
-                                            editor_tab.active + 1
-                                        }),
-                                    );
-                                }
-                            }
-                        }
-                        drag_over.set(None);
-                        EventPropagation::Stop
-                    } else {
-                        EventPropagation::Continue
-                    }
-                })
-                .on_resize(move |rect| {
-                    tab_size.set(rect.size());
-                })
-                .style(move |s| {
-                    s.absolute()
-                        .size_full()
-                        .apply_if(dragging.get().is_none(), |s| {
-                            s.pointer_events_none()
-                        })
-                }),
-        ))
-        .debug_name("Editor Content and Drag Over")
-        .style(|s| s.size_full()),
+                    EventPropagation::Stop
+                } else {
+                    EventPropagation::Continue
+                }
+            })
+            .on_resize(move |rect| {
+                tab_size.set(rect.size());
+            })
+            .style(move |s| {
+                s.absolute()
+                    .size_full()
+                    .apply_if(dragging.get().is_none(), |s| s.pointer_events_none())
+            }),
     ))
+    .debug_name("Editor Content and Drag Over")
+    .style(|s| s.size_full()),))
     .on_event_cont(EventListener::PointerDown, move |_| {
         if focus.get_untracked() != Focus::Workbench {
             focus.set(Focus::Workbench);
@@ -1982,124 +1230,12 @@ fn main_split(window_tab_data: Rc<WindowTabData>) -> impl View {
     .debug_name("Main Split")
 }
 
-pub fn clickable_icon<S: std::fmt::Display + 'static>(
-    icon: impl Fn() -> &'static str + 'static,
-    on_click: impl Fn() + 'static,
-    active_fn: impl Fn() -> bool + 'static,
-    disabled_fn: impl Fn() -> bool + 'static + Copy,
-    tooltip_: impl Fn() -> S + 'static + Clone,
-    config: ReadSignal<Arc<LapceConfig>>,
-) -> impl View {
-    tooltip_label(
-        config,
-        clickable_icon_base(icon, Some(on_click), active_fn, disabled_fn, config),
-        tooltip_,
-    )
-}
-
-pub fn clickable_icon_base(
-    icon: impl Fn() -> &'static str + 'static,
-    on_click: Option<impl Fn() + 'static>,
-    active_fn: impl Fn() -> bool + 'static,
-    disabled_fn: impl Fn() -> bool + 'static + Copy,
-    config: ReadSignal<Arc<LapceConfig>>,
-) -> impl View {
-    let view = container(
-        svg(move || config.get().ui_svg(icon()))
-            .style(move |s| {
-                let config = config.get();
-                let size = config.ui.icon_size() as f32;
-                s.size(size, size)
-                    .color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
-                    .disabled(|s| {
-                        s.color(config.color(LapceColor::LAPCE_ICON_INACTIVE))
-                            .cursor(CursorStyle::Default)
-                    })
-            })
-            .disabled(disabled_fn),
-    )
-    .disabled(disabled_fn)
-    .style(move |s| {
-        let config = config.get();
-        s.padding(4.0)
-            .border_radius(6.0)
-            .border(1.0)
-            .border_color(Color::TRANSPARENT)
-            .apply_if(active_fn(), |s| {
-                s.border_color(config.color(LapceColor::EDITOR_CARET))
-            })
-            .hover(|s| {
-                s.cursor(CursorStyle::Pointer)
-                    .background(config.color(LapceColor::PANEL_HOVERED_BACKGROUND))
-            })
-            .active(|s| {
-                s.background(
-                    config.color(LapceColor::PANEL_HOVERED_ACTIVE_BACKGROUND),
-                )
-            })
-    });
-
-    if let Some(on_click) = on_click {
-        view.on_click_stop(move |_| {
-            on_click();
-        })
-    } else {
-        view
-    }
-}
-
-/// A tooltip with a label inside.  
-/// When styling an element that has the tooltip, it will style the child rather than the tooltip
-/// label.
-pub fn tooltip_label<S: std::fmt::Display + 'static, V: View + 'static>(
-    config: ReadSignal<Arc<LapceConfig>>,
-    child: V,
-    text: impl Fn() -> S + 'static + Clone,
-) -> impl View {
-    tooltip(child, move || {
-        tooltip_tip(
-            config,
-            label(text.clone()).style(move |s| s.selectable(false)),
-        )
-    })
-}
-
-fn tooltip_tip<V: View + 'static>(
-    config: ReadSignal<Arc<LapceConfig>>,
-    child: V,
-) -> impl IntoView {
-    container(child).style(move |s| {
-        let config = config.get();
-        s.padding_horiz(10.0)
-            .padding_vert(5.0)
-            .font_size(config.ui.font_size() as f32)
-            .font_family(config.ui.font_family.clone())
-            .color(config.color(LapceColor::TOOLTIP_FOREGROUND))
-            .background(config.color(LapceColor::TOOLTIP_BACKGROUND))
-            .border(1)
-            .border_radius(6)
-            .border_color(config.color(LapceColor::LAPCE_BORDER))
-            .box_shadow_blur(3.0)
-            .box_shadow_color(config.color(LapceColor::LAPCE_DROPDOWN_SHADOW))
-            .margin_left(0.0)
-            .margin_top(4.0)
-    })
-}
-
 fn workbench(window_tab_data: Rc<WindowTabData>) -> impl View {
     let workbench_size = window_tab_data.common.workbench_size;
     let main_split_width = window_tab_data.main_split.width;
-    stack((
-        panel_container_view(window_tab_data.clone(), PanelContainerPosition::Left),
-        {
-            let window_tab_data = window_tab_data.clone();
-            stack((
-                main_split(window_tab_data.clone()),
-                panel_container_view(
-                    window_tab_data,
-                    PanelContainerPosition::Bottom,
-                ),
-            ))
+    {
+        let window_tab_data = window_tab_data.clone();
+        main_split(window_tab_data.clone())
             .on_resize(move |rect| {
                 let width = rect.size().width;
                 if main_split_width.get_untracked() != width {
@@ -2107,10 +1243,7 @@ fn workbench(window_tab_data: Rc<WindowTabData>) -> impl View {
                 }
             })
             .style(|s| s.flex_col().flex_grow(1.0))
-        },
-        panel_container_view(window_tab_data.clone(), PanelContainerPosition::Right),
-        window_message_view(window_tab_data.messages, window_tab_data.common.config),
-    ))
+    }
     .on_resize(move |rect| {
         let size = rect.size();
         if size != workbench_size.get_untracked() {
@@ -2119,742 +1252,6 @@ fn workbench(window_tab_data: Rc<WindowTabData>) -> impl View {
     })
     .style(move |s| s.size_full())
     .debug_name("Workbench")
-}
-
-fn palette_item(
-    workspace: Arc<LapceWorkspace>,
-    i: usize,
-    item: PaletteItem,
-    index: ReadSignal<usize>,
-    palette_item_height: f64,
-    config: ReadSignal<Arc<LapceConfig>>,
-    keymap: Option<&KeyMap>,
-) -> impl View + use<> {
-    match &item.content {
-        PaletteItemContent::File { path, .. }
-        | PaletteItemContent::Reference { path, .. } => {
-            let file_name = path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned();
-            // let (file_name, _) = create_signal(cx.scope, file_name);
-            let folder = path
-                .parent()
-                .unwrap_or("".as_ref())
-                .to_string_lossy()
-                .into_owned();
-            // let (folder, _) = create_signal(cx.scope, folder);
-            let folder_len = folder.len();
-
-            let file_name_indices = item
-                .indices
-                .iter()
-                .filter_map(|&i| {
-                    if folder_len > 0 {
-                        if i > folder_len {
-                            Some(i - folder_len - 1)
-                        } else {
-                            None
-                        }
-                    } else {
-                        Some(i)
-                    }
-                })
-                .collect::<Vec<_>>();
-            let folder_indices = item
-                .indices
-                .iter()
-                .filter_map(|&i| if i < folder_len { Some(i) } else { None })
-                .collect::<Vec<_>>();
-
-            let path = path.to_path_buf();
-            let style_path = path.clone();
-            container(
-                stack((
-                    svg(move || config.get().file_svg(&path).0).style(move |s| {
-                        let config = config.get();
-                        let size = config.ui.icon_size() as f32;
-                        let color = config.file_svg(&style_path).1;
-                        s.min_width(size)
-                            .size(size, size)
-                            .margin_right(5.0)
-                            .apply_opt(color, Style::color)
-                    }),
-                    focus_text(
-                        move || file_name.clone(),
-                        move || file_name_indices.clone(),
-                        move || config.get().color(LapceColor::EDITOR_FOCUS),
-                    )
-                    .style(|s| s.margin_right(6.0).max_width_full()),
-                    focus_text(
-                        move || folder.clone(),
-                        move || folder_indices.clone(),
-                        move || config.get().color(LapceColor::EDITOR_FOCUS),
-                    )
-                    .style(move |s| {
-                        s.color(config.get().color(LapceColor::EDITOR_DIM))
-                            .min_width(0.0)
-                            .flex_grow(1.0)
-                            .flex_basis(0.0)
-                    }),
-                ))
-                .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
-            )
-        }
-        PaletteItemContent::DocumentSymbol {
-            kind,
-            name,
-            container_name,
-            ..
-        } => {
-            let kind = *kind;
-            let text = name.to_string();
-            let hint = container_name.clone().unwrap_or_default();
-            let text_indices: Vec<usize> = item
-                .indices
-                .iter()
-                .filter_map(|i| {
-                    let i = *i;
-                    if i < text.len() { Some(i) } else { None }
-                })
-                .collect();
-            let hint_indices: Vec<usize> = item
-                .indices
-                .iter()
-                .filter_map(|i| {
-                    let i = *i;
-                    if i >= text.len() {
-                        Some(i - text.len())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            container(
-                stack((
-                    svg(move || {
-                        let config = config.get();
-                        config
-                            .symbol_svg(&kind)
-                            .unwrap_or_else(|| config.ui_svg(LapceIcons::FILE))
-                    })
-                    .style(move |s| {
-                        let config = config.get();
-                        let size = config.ui.icon_size() as f32;
-                        s.min_width(size).size(size, size).margin_right(5.0).color(
-                            config.symbol_color(&kind).unwrap_or_else(|| {
-                                config.color(LapceColor::LAPCE_ICON_ACTIVE)
-                            }),
-                        )
-                    }),
-                    focus_text(
-                        move || text.clone(),
-                        move || text_indices.clone(),
-                        move || config.get().color(LapceColor::EDITOR_FOCUS),
-                    )
-                    .style(|s| s.margin_right(6.0).max_width_full()),
-                    focus_text(
-                        move || hint.clone(),
-                        move || hint_indices.clone(),
-                        move || config.get().color(LapceColor::EDITOR_FOCUS),
-                    )
-                    .style(move |s| {
-                        s.color(config.get().color(LapceColor::EDITOR_DIM))
-                            .min_width(0.0)
-                            .flex_grow(1.0)
-                            .flex_basis(0.0)
-                    }),
-                ))
-                .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
-            )
-        }
-        PaletteItemContent::WorkspaceSymbol {
-            kind,
-            name,
-            location,
-            ..
-        } => {
-            let text = name.to_string();
-            let kind = *kind;
-
-            let path = location.path.clone();
-            let full_path = location.path.clone();
-            let path = if let Some(workspace_path) = workspace.path.as_ref() {
-                path.strip_prefix(workspace_path)
-                    .unwrap_or(&full_path)
-                    .to_path_buf()
-            } else {
-                path
-            };
-
-            let hint = path.to_string_lossy().to_string();
-            let text_indices: Vec<usize> = item
-                .indices
-                .iter()
-                .filter_map(|i| {
-                    let i = *i;
-                    if i < text.len() { Some(i) } else { None }
-                })
-                .collect();
-            let hint_indices: Vec<usize> = item
-                .indices
-                .iter()
-                .filter_map(|i| {
-                    let i = *i;
-                    if i >= text.len() {
-                        Some(i - text.len())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            container(
-                stack((
-                    svg(move || {
-                        let config = config.get();
-                        config
-                            .symbol_svg(&kind)
-                            .unwrap_or_else(|| config.ui_svg(LapceIcons::FILE))
-                    })
-                    .style(move |s| {
-                        let config = config.get();
-                        let size = config.ui.icon_size() as f32;
-                        s.min_width(size)
-                            .size(size, size)
-                            .margin_right(5.0)
-                            .color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
-                    }),
-                    focus_text(
-                        move || text.clone(),
-                        move || text_indices.clone(),
-                        move || config.get().color(LapceColor::EDITOR_FOCUS),
-                    )
-                    .style(|s| s.margin_right(6.0).max_width_full()),
-                    focus_text(
-                        move || hint.clone(),
-                        move || hint_indices.clone(),
-                        move || config.get().color(LapceColor::EDITOR_FOCUS),
-                    )
-                    .style(move |s| {
-                        s.color(config.get().color(LapceColor::EDITOR_DIM))
-                            .min_width(0.0)
-                            .flex_grow(1.0)
-                            .flex_basis(0.0)
-                    }),
-                ))
-                .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
-            )
-        }
-        PaletteItemContent::RunAndDebug {
-            mode,
-            config: run_config,
-        } => {
-            let mode = *mode;
-            let text = format!("{mode} {}", run_config.name);
-            let hint = format!(
-                "{} {}",
-                run_config.program,
-                run_config.args.clone().unwrap_or_default().join(" ")
-            );
-            let text_indices: Vec<usize> = item
-                .indices
-                .iter()
-                .filter_map(|i| {
-                    let i = *i;
-                    if i < text.len() { Some(i) } else { None }
-                })
-                .collect();
-            let hint_indices: Vec<usize> = item
-                .indices
-                .iter()
-                .filter_map(|i| {
-                    let i = *i;
-                    if i >= text.len() {
-                        Some(i - text.len())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            container(
-                stack((
-                    svg(move || {
-                        let config = config.get();
-                        match mode {
-                            RunDebugMode::Run => config.ui_svg(LapceIcons::START),
-                            RunDebugMode::Debug => config.ui_svg(LapceIcons::DEBUG),
-                        }
-                    })
-                    .style(move |s| {
-                        let config = config.get();
-                        let size = config.ui.icon_size() as f32;
-                        s.min_width(size)
-                            .size(size, size)
-                            .margin_right(5.0)
-                            .color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
-                    }),
-                    focus_text(
-                        move || text.clone(),
-                        move || text_indices.clone(),
-                        move || config.get().color(LapceColor::EDITOR_FOCUS),
-                    )
-                    .style(|s| s.margin_right(6.0).max_width_full()),
-                    focus_text(
-                        move || hint.clone(),
-                        move || hint_indices.clone(),
-                        move || config.get().color(LapceColor::EDITOR_FOCUS),
-                    )
-                    .style(move |s| {
-                        s.color(config.get().color(LapceColor::EDITOR_DIM))
-                            .min_width(0.0)
-                            .flex_grow(1.0)
-                            .flex_basis(0.0)
-                    }),
-                ))
-                .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
-            )
-        }
-        PaletteItemContent::PaletteHelp { .. }
-        | PaletteItemContent::Command { .. } => {
-            let text = item.filter_text;
-            let indices = item.indices;
-            let keys = if let Some(keymap) = keymap {
-                keymap
-                    .key
-                    .iter()
-                    .map(|key| key.label().trim().to_string())
-                    .filter(|l| !l.is_empty())
-                    .collect()
-            } else {
-                vec![]
-            };
-            container(
-                stack((
-                    focus_text(
-                        move || text.clone(),
-                        move || indices.clone(),
-                        move || config.get().color(LapceColor::EDITOR_FOCUS),
-                    )
-                    .style(|s| {
-                        s.flex_row()
-                            .flex_grow(1.0)
-                            .align_items(Some(AlignItems::Center))
-                    }),
-                    stack((dyn_stack(
-                        move || keys.clone(),
-                        |k| k.clone(),
-                        move |key| {
-                            label(move || key.clone()).style(move |s| {
-                                s.padding_horiz(5.0)
-                                    .padding_vert(1.0)
-                                    .margin_right(5.0)
-                                    .border(1.0)
-                                    .border_radius(3.0)
-                                    .border_color(
-                                        config.get().color(LapceColor::LAPCE_BORDER),
-                                    )
-                                    .selectable(false)
-                            })
-                        },
-                    ),)),
-                ))
-                .style(|s| s.width_full().items_center()),
-            )
-        }
-        PaletteItemContent::Line { .. }
-        | PaletteItemContent::Workspace { .. }
-        | PaletteItemContent::SshHost { .. }
-        | PaletteItemContent::Language { .. }
-        | PaletteItemContent::LineEnding { .. }
-        | PaletteItemContent::ColorTheme { .. }
-        | PaletteItemContent::SCMReference { .. }
-        | PaletteItemContent::TerminalProfile { .. }
-        | PaletteItemContent::IconTheme { .. } => {
-            let text = item.filter_text;
-            let indices = item.indices;
-            container(
-                focus_text(
-                    move || text.clone(),
-                    move || indices.clone(),
-                    move || config.get().color(LapceColor::EDITOR_FOCUS),
-                )
-                .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
-            )
-        }
-        #[cfg(windows)]
-        PaletteItemContent::WslHost { .. } => {
-            let text = item.filter_text;
-            let indices = item.indices;
-            container(
-                focus_text(
-                    move || text.clone(),
-                    move || indices.clone(),
-                    move || config.get().color(LapceColor::EDITOR_FOCUS),
-                )
-                .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
-            )
-        }
-    }
-    .style(move |s| {
-        s.width_full()
-            .height(palette_item_height as f32)
-            .padding_horiz(10.0)
-            .apply_if(index.get() == i, |style| {
-                style.background(
-                    config.get().color(LapceColor::PALETTE_CURRENT_BACKGROUND),
-                )
-            })
-    })
-}
-
-fn palette_input(window_tab_data: Rc<WindowTabData>) -> impl View {
-    let editor = window_tab_data.palette.input_editor.clone();
-    let config = window_tab_data.common.config;
-    let focus = window_tab_data.common.focus;
-    let is_focused = move || focus.get() == Focus::Palette;
-
-    let input = TextInputBuilder::new()
-        .is_focused(is_focused)
-        .build_editor(editor)
-        .placeholder(move || window_tab_data.palette.placeholder_text().to_owned())
-        .style(|s| s.width_full());
-
-    container(container(input).style(move |s| {
-        let config = config.get();
-        s.width_full()
-            .height(25.0)
-            .items_center()
-            .border_bottom(1.0)
-            .border_color(config.color(LapceColor::LAPCE_BORDER))
-            .background(config.color(LapceColor::EDITOR_BACKGROUND))
-    }))
-    .style(|s| s.padding_bottom(5.0))
-}
-
-struct PaletteItems(im::Vector<PaletteItem>);
-
-impl VirtualVector<(usize, PaletteItem)> for PaletteItems {
-    fn total_len(&self) -> usize {
-        self.0.len()
-    }
-
-    fn slice(
-        &mut self,
-        range: Range<usize>,
-    ) -> impl Iterator<Item = (usize, PaletteItem)> {
-        let start = range.start;
-        Box::new(
-            self.0
-                .slice(range)
-                .into_iter()
-                .enumerate()
-                .map(move |(i, item)| (i + start, item)),
-        )
-    }
-}
-
-fn palette_content(
-    window_tab_data: Rc<WindowTabData>,
-    layout_rect: ReadSignal<Rect>,
-) -> impl View {
-    let items = window_tab_data.palette.filtered_items;
-    let keymaps = window_tab_data
-        .palette
-        .keypress
-        .get_untracked()
-        .command_keymaps;
-    let index = window_tab_data.palette.index.read_only();
-    let clicked_index = window_tab_data.palette.clicked_index.write_only();
-    let config = window_tab_data.common.config;
-    let run_id = window_tab_data.palette.run_id;
-    let input = window_tab_data.palette.input.read_only();
-    let palette_item_height = 25.0;
-    let workspace = window_tab_data.workspace.clone();
-    stack((
-        scroll({
-            let workspace = workspace.clone();
-            virtual_stack(
-                move || PaletteItems(items.get()),
-                move |(i, _item)| {
-                    (run_id.get_untracked(), *i, input.get_untracked().input)
-                },
-                move |(i, item)| {
-                    let workspace = workspace.clone();
-                    let keymap = {
-                        let cmd_kind = match &item.content {
-                            PaletteItemContent::PaletteHelp { cmd } => {
-                                Some(CommandKind::Workbench(cmd.clone()))
-                            }
-                            PaletteItemContent::Command {
-                                cmd: LapceCommand { kind, .. },
-                            } => Some(kind.clone()),
-                            _ => None,
-                        };
-
-                        cmd_kind
-                            .and_then(|kind| keymaps.get(kind.str()))
-                            .and_then(|maps| maps.first())
-                    };
-                    container(palette_item(
-                        workspace,
-                        i,
-                        item,
-                        index,
-                        palette_item_height,
-                        config,
-                        keymap,
-                    ))
-                    .on_click_stop(move |_| {
-                        clicked_index.set(Some(i));
-                    })
-                    .style(move |s| {
-                        s.width_full().cursor(CursorStyle::Pointer).hover(|s| {
-                            s.background(
-                                config
-                                    .get()
-                                    .color(LapceColor::PANEL_HOVERED_BACKGROUND),
-                            )
-                        })
-                    })
-                },
-            )
-            .item_size_fixed(move || palette_item_height)
-            .style(|s| s.width_full().flex_col())
-        })
-        .ensure_visible(move || {
-            Size::new(1.0, palette_item_height)
-                .to_rect()
-                .with_origin(Point::new(
-                    0.0,
-                    index.get() as f64 * palette_item_height,
-                ))
-        })
-        .style(|s| {
-            s.width_full()
-                .min_height(0.0)
-                .set(PropagatePointerWheel, false)
-        }),
-        text("No matching results").style(move |s| {
-            s.display(if items.with(|items| items.is_empty()) {
-                Display::Flex
-            } else {
-                Display::None
-            })
-            .padding_horiz(10.0)
-            .align_items(Some(AlignItems::Center))
-            .height(palette_item_height as f32)
-        }),
-    ))
-    .style(move |s| {
-        s.flex_col()
-            .width_full()
-            .min_height(0.0)
-            .max_height((layout_rect.get().height() * 0.45 - 36.0).round() as f32)
-            .padding_bottom(5.0)
-            .padding_bottom(5.0)
-    })
-}
-
-fn palette_preview(window_tab_data: Rc<WindowTabData>) -> impl View {
-    let palette_data = window_tab_data.palette.clone();
-    let workspace = palette_data.workspace.clone();
-    let preview_editor = palette_data.preview_editor;
-    let has_preview = palette_data.has_preview;
-    let config = palette_data.common.config;
-    let preview_editor = create_rw_signal(preview_editor);
-    container(
-        container(editor_container_view(
-            window_tab_data,
-            workspace,
-            |_tracked: bool| true,
-            preview_editor,
-        ))
-        .style(move |s| {
-            let config = config.get();
-            s.position(Position::Absolute)
-                .border_top(1.0)
-                .border_color(config.color(LapceColor::LAPCE_BORDER))
-                .size_full()
-                .background(config.color(LapceColor::EDITOR_BACKGROUND))
-        }),
-    )
-    .style(move |s| {
-        s.display(if has_preview.get() {
-            Display::Flex
-        } else {
-            Display::None
-        })
-        .flex_grow(1.0)
-    })
-}
-
-fn palette(window_tab_data: Rc<WindowTabData>) -> impl View {
-    let layout_rect = window_tab_data.layout_rect.read_only();
-    let palette_data = window_tab_data.palette.clone();
-    let status = palette_data.status.read_only();
-    let config = palette_data.common.config;
-    let has_preview = palette_data.has_preview.read_only();
-    container(
-        stack((
-            palette_input(window_tab_data.clone()),
-            palette_content(window_tab_data.clone(), layout_rect),
-            palette_preview(window_tab_data.clone()),
-        ))
-        .on_event_stop(EventListener::PointerDown, move |_| {})
-        .style(move |s| {
-            let config = config.get();
-            s.width(config.ui.palette_width() as f64)
-                .max_width_full()
-                .max_height(if has_preview.get() {
-                    PxPctAuto::Auto
-                } else {
-                    PxPctAuto::Pct(100.0)
-                })
-                .height(if has_preview.get() {
-                    PxPctAuto::Px(layout_rect.get().height() - 10.0)
-                } else {
-                    PxPctAuto::Auto
-                })
-                .margin_top(4.0)
-                .border(1.0)
-                .border_radius(6.0)
-                .border_color(config.color(LapceColor::LAPCE_BORDER))
-                .flex_col()
-                .background(config.color(LapceColor::PALETTE_BACKGROUND))
-                .pointer_events_auto()
-        }),
-    )
-    .style(move |s| {
-        s.display(if status.get() == PaletteStatus::Inactive {
-            Display::None
-        } else {
-            Display::Flex
-        })
-        .position(Position::Absolute)
-        .size_full()
-        .flex_col()
-        .items_center()
-        .pointer_events_none()
-    })
-    .debug_name("Pallete Layer")
-}
-
-fn window_message_view(
-    messages: RwSignal<Vec<(String, ShowMessageParams)>>,
-    config: ReadSignal<Arc<LapceConfig>>,
-) -> impl View {
-    let view_fn =
-        move |(i, (title, message)): (usize, (String, ShowMessageParams))| {
-            stack((
-                svg(move || {
-                    if let MessageType::ERROR = message.typ {
-                        config.get().ui_svg(LapceIcons::ERROR)
-                    } else {
-                        config.get().ui_svg(LapceIcons::WARNING)
-                    }
-                })
-                .style(move |s| {
-                    let config = config.get();
-                    let size = config.ui.icon_size() as f32;
-                    let color = if let MessageType::ERROR = message.typ {
-                        config.color(LapceColor::LAPCE_ERROR)
-                    } else {
-                        config.color(LapceColor::LAPCE_WARN)
-                    };
-                    s.min_width(size)
-                        .size(size, size)
-                        .margin_right(10.0)
-                        .margin_top(4.0)
-                        .color(color)
-                }),
-                stack((
-                    text(title.clone()).style(|s| {
-                        s.min_width(0.0).line_height(1.8).font_weight(Weight::BOLD)
-                    }),
-                    text(message.message.clone()).style(|s| {
-                        s.min_width(0.0).line_height(1.8).margin_top(5.0)
-                    }),
-                ))
-                .style(move |s| {
-                    s.flex_col().min_width(0.0).flex_basis(0.0).flex_grow(1.0)
-                }),
-                clickable_icon(
-                    || LapceIcons::CLOSE,
-                    move || {
-                        messages.update(|messages| {
-                            messages.remove(i);
-                        });
-                    },
-                    || false,
-                    || false,
-                    || "Close",
-                    config,
-                )
-                .style(|s| s.margin_left(6.0)),
-            ))
-            .on_double_click_stop(move |_| {
-                messages.update(|messages| {
-                    messages.remove(i);
-                });
-            })
-            .on_secondary_click_stop({
-                let message = message.message.clone();
-                move |_| {
-                    let mut clipboard = SystemClipboard::new();
-                    if !message.is_empty() {
-                        clipboard.put_string(&message);
-                    }
-                }
-            })
-            .on_event_stop(EventListener::PointerDown, |_| {})
-            .style(move |s| {
-                let config = config.get();
-                s.width_full()
-                    .items_start()
-                    .padding(10.0)
-                    .border(1.0)
-                    .border_radius(6.0)
-                    .border_color(config.color(LapceColor::LAPCE_BORDER))
-                    .background(config.color(LapceColor::PANEL_BACKGROUND))
-                    .apply_if(i > 0, |s| s.margin_top(10.0))
-            })
-        };
-
-    let id = AtomicU64::new(0);
-    container(
-        container(
-            container(
-                scroll(
-                    dyn_stack(
-                        move || messages.get().into_iter().enumerate(),
-                        move |_| {
-                            id.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                        },
-                        view_fn,
-                    )
-                    .style(|s| s.flex_col().width_full()),
-                )
-                .style(|s| {
-                    s.absolute()
-                        .pointer_events_auto()
-                        .width_full()
-                        .min_height(0.0)
-                        .max_height_full()
-                        .set(PropagatePointerWheel, false)
-                }),
-            )
-            .style(|s| s.size_full()),
-        )
-        .style(|s| {
-            s.width(360.0)
-                .max_width_pct(80.0)
-                .padding(10.0)
-                .height_full()
-        }),
-    )
-    .style(|s| s.absolute().size_full().justify_end().pointer_events_none())
-    .debug_name("Window Message View")
 }
 
 struct VectorItems<V>(im::Vector<V>);
@@ -3201,40 +1598,26 @@ fn rename(window_tab_data: Rc<WindowTabData>) -> impl View {
 }
 
 fn window_tab(window_tab_data: Rc<WindowTabData>) -> impl View {
-    let source_control = window_tab_data.source_control.clone();
     let window_origin = window_tab_data.common.window_origin;
     let layout_rect = window_tab_data.layout_rect;
     let config = window_tab_data.common.config;
-    let workbench_command = window_tab_data.common.workbench_command;
     let window_tab_scope = window_tab_data.scope;
     let hover_active = window_tab_data.common.hover.active;
-    let status_height = window_tab_data.status_height;
 
     let view = stack((
-        stack((
-            title(window_tab_data.clone()),
-            workbench(window_tab_data.clone()),
-            status(
-                window_tab_data.clone(),
-                source_control,
-                workbench_command,
-                status_height,
-                config,
-            ),
-        ))
-        .on_resize(move |rect| {
-            layout_rect.set(rect);
-        })
-        .on_move(move |point| {
-            window_origin.set(point);
-        })
-        .style(|s| s.size_full().flex_col())
-        .debug_name("Base Layer"),
+        workbench(window_tab_data.clone())
+            .on_resize(move |rect| {
+                layout_rect.set(rect);
+            })
+            .on_move(move |point| {
+                window_origin.set(point);
+            })
+            .style(|s| s.size_full().flex_col())
+            .debug_name("Base Layer"),
         completion(window_tab_data.clone()),
         hover(window_tab_data.clone()),
-        code_action(window_tab_data.clone()),
+        code_action(window_tab_data.clone()), // TODO: what is this?
         rename(window_tab_data.clone()),
-        palette(window_tab_data.clone()),
         about::about_popup(window_tab_data.clone()),
         alert::alert_box(window_tab_data.alert_data.clone()),
     ))
@@ -3264,298 +1647,6 @@ fn window_tab(window_tab_data: Rc<WindowTabData>) -> impl View {
     let view_id = view.id();
     window_tab_data.common.view_id.set(view_id);
     view
-}
-
-fn workspace_title(workspace: &LapceWorkspace) -> Option<String> {
-    let p = workspace.path.as_ref()?;
-    let dir = p.file_name().unwrap_or(p.as_os_str()).to_string_lossy();
-    Some(match &workspace.kind {
-        LapceWorkspaceType::Local => format!("{dir}"),
-        LapceWorkspaceType::RemoteSSH(remote) => format!("{dir} [{remote}]"),
-        #[cfg(windows)]
-        LapceWorkspaceType::RemoteWSL(remote) => format!("{dir} [{remote}]"),
-    })
-}
-
-fn workspace_tab_header(window_data: WindowData) -> impl View {
-    let tabs = window_data.window_tabs;
-    let active = window_data.active;
-    let config = window_data.config;
-    let window_tab_header_height = window_data.common.window_tab_header_height;
-    let available_width = create_rw_signal(0.0);
-    let add_icon_width = create_rw_signal(0.0);
-    let window_control_width = create_rw_signal(0.0);
-    let window_maximized = window_data.common.window_maximized;
-    let num_window_tabs = window_data.num_window_tabs;
-    let window_command = window_data.common.window_command;
-
-    let tab_width = create_memo(move |_| {
-        let window_control_width = if !cfg!(target_os = "macos")
-            && config.get_untracked().core.custom_titlebar
-        {
-            window_control_width.get()
-        } else {
-            0.0
-        };
-        let available_width = available_width.get()
-            - add_icon_width.get()
-            - if cfg!(target_os = "macos") { 75.0 } else { 0.0 }
-            - window_control_width
-            - 30.0;
-        let tabs_len = tabs.with(|tabs| tabs.len());
-        if tabs_len > 0 {
-            (available_width / tabs_len as f64).min(200.0)
-        } else {
-            available_width
-        }
-    });
-
-    let local_window_data = window_data.clone();
-    let dragging_index: RwSignal<Option<RwSignal<usize>>> = create_rw_signal(None);
-    let view_fn = move |(index, tab): (RwSignal<usize>, Rc<WindowTabData>)| {
-        let drag_over_left = create_rw_signal(None);
-        let window_data = local_window_data.clone();
-        stack((
-            container({
-                stack((
-                    stack((
-                        text(
-                            workspace_title(&tab.workspace)
-                                .unwrap_or_else(|| String::from("New Tab")),
-                        )
-                        .style(|s| {
-                            s.margin_left(10.0)
-                                .min_width(0.0)
-                                .flex_basis(0.0)
-                                .flex_grow(1.0)
-                                .selectable(false)
-                                .text_ellipsis()
-                        }),
-                        {
-                            let window_data = local_window_data.clone();
-                            clickable_icon(
-                                || LapceIcons::WINDOW_CLOSE,
-                                move || {
-                                    window_data.run_window_command(
-                                        WindowCommand::CloseWorkspaceTab {
-                                            index: Some(index.get_untracked()),
-                                        },
-                                    );
-                                },
-                                || false,
-                                || false,
-                                || "Close",
-                                config.read_only(),
-                            )
-                            .style(|s| s.margin_horiz(6.0))
-                        },
-                    ))
-                    .on_event_stop(EventListener::DragOver, move |event| {
-                        if dragging_index.get_untracked().is_some() {
-                            if let Event::PointerMove(pointer_event) = event {
-                                let left = pointer_event.pos.x
-                                    < tab_width.get_untracked() / 2.0;
-                                if drag_over_left.get_untracked() != Some(left) {
-                                    drag_over_left.set(Some(left));
-                                }
-                            }
-                        }
-                    })
-                    .on_event(EventListener::Drop, move |event| {
-                        if dragging_index.get_untracked().is_some() {
-                            drag_over_left.set(None);
-                            if let Event::PointerUp(pointer_event) = event {
-                                let left = pointer_event.pos.x
-                                    < tab_width.get_untracked() / 2.0;
-                                let index = index.get_untracked();
-                                let new_index = if left { index } else { index + 1 };
-                                if let Some(from_index) =
-                                    dragging_index.get_untracked()
-                                {
-                                    window_data.move_tab(
-                                        from_index.get_untracked(),
-                                        new_index,
-                                    );
-                                }
-                                dragging_index.set(None);
-                            }
-                            EventPropagation::Stop
-                        } else {
-                            EventPropagation::Continue
-                        }
-                    })
-                    .on_event_stop(EventListener::DragLeave, move |_| {
-                        drag_over_left.set(None);
-                    })
-                    .style(move |s| {
-                        let config = config.get();
-                        s.width_full()
-                            .min_width(0.0)
-                            .items_center()
-                            .border_right(1.0)
-                            .border_color(config.color(LapceColor::LAPCE_BORDER))
-                            .apply_if(
-                                cfg!(target_os = "macos") && index.get() == 0,
-                                |s| s.border_left(1.0),
-                            )
-                    }),
-                    container(empty().style(move |s| {
-                        s.size_full()
-                            .apply_if(active.get() == index.get(), |s| {
-                                s.border_bottom(2.0)
-                            })
-                            .border_color(
-                                config
-                                    .get()
-                                    .color(LapceColor::LAPCE_TAB_ACTIVE_UNDERLINE),
-                            )
-                    }))
-                    .style(move |s| {
-                        s.position(Position::Absolute)
-                            .padding_horiz(3.0)
-                            .size_full()
-                            .pointer_events_none()
-                    }),
-                ))
-                .style(move |s| s.size_full().items_center())
-            })
-            .draggable()
-            .on_event_stop(EventListener::DragStart, move |_| {
-                dragging_index.set(Some(index));
-            })
-            .on_event_stop(EventListener::DragEnd, move |_| {
-                dragging_index.set(None);
-            })
-            .dragging_style(move |s| {
-                let config = config.get();
-                s.border(1.0)
-                    .border_radius(6.0)
-                    .border_color(config.color(LapceColor::LAPCE_BORDER))
-                    .color(
-                        config
-                            .color(LapceColor::EDITOR_FOREGROUND)
-                            .multiply_alpha(0.7),
-                    )
-                    .background(
-                        config
-                            .color(LapceColor::PANEL_BACKGROUND)
-                            .multiply_alpha(0.7),
-                    )
-            })
-            .on_click_stop(move |_| {
-                active.set(index.get_untracked());
-            })
-            .style(move |s| s.size_full()),
-            empty().style(move |s| {
-                let index = index.get();
-                s.absolute()
-                    .margin_left(if index == 0 { 0.0 } else { -2.0 })
-                    .width(
-                        tab_width.get() as f32 + if index == 0 { 1.0 } else { 3.0 },
-                    )
-                    .height_full()
-                    .border_color(
-                        config.get().color(LapceColor::LAPCE_TAB_ACTIVE_UNDERLINE),
-                    )
-                    .apply_if(drag_over_left.get().is_some(), move |s| {
-                        let drag_over_left = drag_over_left.get_untracked().unwrap();
-                        if drag_over_left {
-                            s.border_left(3.0)
-                        } else {
-                            s.border_right(3.0)
-                        }
-                    })
-                    .apply_if(drag_over_left.get().is_none(), move |s| s.hide())
-            }),
-        ))
-        .style(move |s| s.height_full().width(tab_width.get() as f32))
-    };
-
-    stack((
-        empty().style(move |s| {
-            let is_macos = cfg!(target_os = "macos");
-            s.min_width(75.0)
-                .width(75.0)
-                .apply_if(!is_macos, |s| s.hide())
-        }),
-        dyn_stack(
-            move || {
-                let tabs = tabs.get();
-                for (i, (index, _)) in tabs.iter().enumerate() {
-                    if index.get_untracked() != i {
-                        index.set(i);
-                    }
-                }
-                tabs
-            },
-            |(_, tab)| tab.window_tab_id,
-            view_fn,
-        )
-        .style(|s| s.height_full()),
-        container(clickable_icon(
-            || LapceIcons::ADD,
-            move || {
-                window_data.run_window_command(WindowCommand::NewWorkspaceTab {
-                    workspace: LapceWorkspace::default(),
-                    end: true,
-                });
-            },
-            || false,
-            || false,
-            || "New Workspace Tab",
-            config.read_only(),
-        ))
-        .on_resize(move |rect| {
-            let current = add_icon_width.get_untracked();
-            if rect.width() != current {
-                add_icon_width.set(rect.width());
-            }
-        })
-        .style(|s| {
-            s.height_full()
-                .padding_left(10.0)
-                .padding_right(10.0)
-                .items_center()
-        }),
-        drag_window_area(empty())
-            .style(|s| s.height_full().flex_basis(0.0).flex_grow(1.0)),
-        window_controls_view(
-            window_command,
-            false,
-            num_window_tabs,
-            window_maximized,
-            config.read_only(),
-        )
-        .on_resize(move |rect| {
-            let width = rect.width();
-            if window_control_width.get_untracked() != width {
-                window_control_width.set(width);
-            }
-        }),
-    ))
-    .on_resize(move |rect| {
-        let current = available_width.get_untracked();
-        if rect.width() != current {
-            available_width.set(rect.width());
-        }
-        window_tab_header_height.set(rect.height());
-    })
-    .style(move |s| {
-        let config = config.get();
-        s.border_bottom(1.0)
-            .width_full()
-            .height(37.0)
-            .font_size(config.ui.font_size() as f32)
-            .apply_if(!config.ui.font_family.is_empty(), |s| {
-                s.font_family(config.ui.font_family.clone())
-            })
-            .apply_if(tabs.with(|tabs| tabs.len() < 2), |s| s.hide())
-            .color(config.color(LapceColor::EDITOR_FOREGROUND))
-            .border_color(config.color(LapceColor::LAPCE_BORDER))
-            .background(config.color(LapceColor::PANEL_BACKGROUND))
-            .items_center()
-    })
-    .debug_name("Workspace Tab Header")
 }
 
 fn window(window_data: WindowData) -> impl View {
@@ -3597,20 +1688,6 @@ fn window(window_data: WindowData) -> impl View {
     .on_event_cont(EventListener::WindowMaximizeChanged, move |event| {
         if let Event::WindowMaximizeChanged(maximized) = event {
             window_maximized.set(*maximized);
-        }
-    })
-    .window_menu(move || {
-        window_focus.track();
-        let active = active();
-        let window_tabs = window_tabs.get();
-        let window_tab = window_tabs.get(active).or_else(|| window_tabs.last());
-        if let Some((_, window_tab)) = window_tab {
-            window_tab.common.keypress.track();
-            let workbench_command = window_tab.common.workbench_command;
-            let lapce_command = window_tab.common.lapce_command;
-            window_menu(lapce_command, workbench_command)
-        } else {
-            Menu::new("Lapce")
         }
     })
     .style(|s| s.size_full())
@@ -3668,7 +1745,6 @@ pub fn launch() {
         }
     };
     let scope = Scope::new();
-    println!("Provide db");
     provide_context(db.clone());
 
     let window_scale = scope.create_rw_signal(1.0);
@@ -3695,11 +1771,10 @@ pub fn launch() {
         plugin_paths,
     };
 
-    // THIS, is important!
     let app = app_data.create_windows(
         db.clone(),
         vec![PathObject {
-            path: std::path::PathBuf::from("/Users/arthur-fontaine/Developer/code/github.com/arthur-fontaine/mitosis-import-plugin/example/index.html"),
+            path: std::path::PathBuf::from("/Users/arthurfontaine/Developer/code/github.com/arthur-fontaine/quoifeur-font/commitlint.config.js"),
             is_dir: false,
             linecol: Option::Some(LineCol { column: 28, line: 12 }),
         }],
@@ -3816,30 +1891,7 @@ pub fn launch() {
             .unwrap();
     }
 
-    {
-        let app_data = app_data.clone();
-        app_data.app_command.listen(move |command| {
-            app_data.run_app_command(command);
-        });
-    }
-
-    app.on_event(move |event| match event {
-        floem::AppEvent::WillTerminate => {
-            app_data.app_terminated.set(true);
-            // TODO
-            // if let Err(err) = db.insert_app(app_data.clone()) {
-            //     tracing::error!("{:?}", err);
-            // }
-        }
-        floem::AppEvent::Reopen {
-            has_visible_windows,
-        } => {
-            if !has_visible_windows {
-                app_data.new_window(None);
-            }
-        }
-    })
-    .run();
+    app.run();
 }
 
 /// Uses a login shell to load the correct shell environment for the current user.
@@ -3939,158 +1991,4 @@ fn listen_local_socket(tx: SyncSender<CoreNotification>) -> Result<()> {
         });
     }
     Ok(())
-}
-
-pub fn window_menu(
-    lapce_command: Listener<LapceCommand>,
-    workbench_command: Listener<LapceWorkbenchCommand>,
-) -> Menu {
-    Menu::new("Lapce")
-        .entry({
-            let mut menu = Menu::new("Lapce")
-                .entry(MenuItem::new("About Lapce").action(move || {
-                    workbench_command.send(LapceWorkbenchCommand::ShowAbout)
-                }))
-                .separator()
-                .entry(
-                    Menu::new("Settings...")
-                        .entry(MenuItem::new("Open Settings").action(move || {
-                            workbench_command
-                                .send(LapceWorkbenchCommand::OpenSettings);
-                        }))
-                        .entry(MenuItem::new("Open Keyboard Shortcuts").action(
-                            move || {
-                                workbench_command.send(
-                                    LapceWorkbenchCommand::OpenKeyboardShortcuts,
-                                );
-                            },
-                        )),
-                )
-                .separator()
-                .entry(MenuItem::new("Quit Lapce").action(move || {
-                    workbench_command.send(LapceWorkbenchCommand::Quit);
-                }));
-            if cfg!(target_os = "macos") {
-                menu = menu
-                    .separator()
-                    .entry(MenuItem::new("Hide Lapce"))
-                    .entry(MenuItem::new("Hide Others"))
-                    .entry(MenuItem::new("Show All"))
-            }
-            menu
-        })
-        .separator()
-        .entry(
-            Menu::new("File")
-                .entry(MenuItem::new("New File").action(move || {
-                    workbench_command.send(LapceWorkbenchCommand::NewFile);
-                }))
-                .separator()
-                .entry(MenuItem::new("Open").action(move || {
-                    workbench_command.send(LapceWorkbenchCommand::OpenFile);
-                }))
-                .entry(MenuItem::new("Open Folder").action(move || {
-                    workbench_command.send(LapceWorkbenchCommand::OpenFolder);
-                }))
-                .separator()
-                .entry(MenuItem::new("Save").action(move || {
-                    lapce_command.send(LapceCommand {
-                        kind: CommandKind::Focus(FocusCommand::Save),
-                        data: None,
-                    });
-                }))
-                .entry(MenuItem::new("Save All").action(move || {
-                    workbench_command.send(LapceWorkbenchCommand::SaveAll);
-                }))
-                .separator()
-                .entry(MenuItem::new("Close Folder").action(move || {
-                    workbench_command.send(LapceWorkbenchCommand::CloseFolder);
-                }))
-                .entry(MenuItem::new("Close Window").action(move || {
-                    workbench_command.send(LapceWorkbenchCommand::CloseWindow);
-                })),
-        )
-        .entry(
-            Menu::new("Edit")
-                .entry(MenuItem::new("Cut").action(move || {
-                    lapce_command.send(LapceCommand {
-                        kind: CommandKind::Edit(EditCommand::ClipboardCut),
-                        data: None,
-                    });
-                }))
-                .entry(MenuItem::new("Copy").action(move || {
-                    lapce_command.send(LapceCommand {
-                        kind: CommandKind::Edit(EditCommand::ClipboardCopy),
-                        data: None,
-                    });
-                }))
-                .entry(MenuItem::new("Paste").action(move || {
-                    lapce_command.send(LapceCommand {
-                        kind: CommandKind::Edit(EditCommand::ClipboardPaste),
-                        data: None,
-                    });
-                }))
-                .separator()
-                .entry(MenuItem::new("Undo").action(move || {
-                    lapce_command.send(LapceCommand {
-                        kind: CommandKind::Edit(EditCommand::Undo),
-                        data: None,
-                    });
-                }))
-                .entry(MenuItem::new("Redo").action(move || {
-                    lapce_command.send(LapceCommand {
-                        kind: CommandKind::Edit(EditCommand::Redo),
-                        data: None,
-                    });
-                }))
-                .separator()
-                .entry(MenuItem::new("Find").action(move || {
-                    lapce_command.send(LapceCommand {
-                        kind: CommandKind::Focus(FocusCommand::Search),
-                        data: None,
-                    });
-                })),
-        )
-}
-fn tab_secondary_click(
-    internal_command: Listener<InternalCommand>,
-    editor_tab_id: EditorTabId,
-    child: EditorTabChild,
-) {
-    let mut menu = Menu::new("");
-    let child_other = child.clone();
-    let child_right = child.clone();
-    let child_left = child.clone();
-    menu = menu
-        .entry(MenuItem::new("Close").action(move || {
-            internal_command.send(InternalCommand::EditorTabChildClose {
-                editor_tab_id,
-                child: child.clone(),
-            });
-        }))
-        .entry(MenuItem::new("Close Other Tabs").action(move || {
-            internal_command.send(InternalCommand::EditorTabCloseByKind {
-                editor_tab_id,
-                child: child_other.clone(),
-                kind: TabCloseKind::CloseOther,
-            });
-        }))
-        .entry(MenuItem::new("Close All Tabs").action(move || {
-            internal_command.send(InternalCommand::EditorTabClose { editor_tab_id });
-        }))
-        .entry(MenuItem::new("Close Tabs to the Right").action(move || {
-            internal_command.send(InternalCommand::EditorTabCloseByKind {
-                editor_tab_id,
-                child: child_right.clone(),
-                kind: TabCloseKind::CloseToRight,
-            });
-        }))
-        .entry(MenuItem::new("Close Tabs to the Left").action(move || {
-            internal_command.send(InternalCommand::EditorTabCloseByKind {
-                editor_tab_id,
-                child: child_left.clone(),
-                kind: TabCloseKind::CloseToLeft,
-            });
-        }));
-    show_context_menu(menu, None);
 }
