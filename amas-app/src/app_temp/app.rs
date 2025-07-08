@@ -74,7 +74,7 @@ use lapce_app::{
     update::ReleaseInfo,
     window::{TabsInfo, WindowData, WindowInfo},
     window_tab::{Focus, WindowTabData},
-    workspace::{LapceWorkspace, LapceWorkspaceType},
+    workspace::LapceWorkspace,
 };
 
 mod grammars;
@@ -1616,7 +1616,11 @@ fn window(window_data: WindowData) -> impl View {
     .debug_name("Window")
 }
 
-pub fn launch() {
+pub fn into_view(
+    window_id: WindowId,
+    path: &str,
+    linecol: Option<LineCol>,
+) -> impl IntoView {
     trace!(TraceLevel::INFO, "Starting up Amas..");
 
     #[cfg(feature = "vendored-fonts")]
@@ -1693,12 +1697,13 @@ pub fn launch() {
         plugin_paths,
     };
 
-    let app = app_data.create_windows(
+    let app_view = app_data.into_view(
+        window_id,
         db.clone(),
         vec![PathObject {
-            path: std::path::PathBuf::from("/Users/arthurfontaine/Developer/code/github.com/arthur-fontaine/quoifeur-font/commitlint.config.js"),
+            path: std::path::PathBuf::from(path),
             is_dir: false,
-            linecol: Option::Some(LineCol { column: 28, line: 12 }),
+            linecol,
         }],
     );
 
@@ -1765,31 +1770,6 @@ pub fn launch() {
             .unwrap();
     }
 
-    #[cfg(feature = "updater")]
-    {
-        let (tx, rx) = sync_channel(1);
-        let notification = create_signal_from_channel(rx);
-        let latest_release = app_data.latest_release;
-        create_effect(move |_| {
-            if let Some(release) = notification.get() {
-                latest_release.set(Arc::new(Some(release)));
-            }
-        });
-        std::thread::Builder::new()
-            .name("LapceUpdater".to_owned())
-            .spawn(move || {
-                loop {
-                    if let Ok(release) = crate::update::get_latest_release() {
-                        if let Err(err) = tx.send(release) {
-                            tracing::error!("{:?}", err);
-                        }
-                    }
-                    std::thread::sleep(std::time::Duration::from_secs(60 * 60));
-                }
-            })
-            .unwrap();
-    }
-
     {
         let (tx, rx) = sync_channel(1);
         let notification = create_signal_from_channel(rx);
@@ -1813,7 +1793,7 @@ pub fn launch() {
             .unwrap();
     }
 
-    app.run();
+    app_view
 }
 
 /// Uses a login shell to load the correct shell environment for the current user.
