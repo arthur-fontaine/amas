@@ -1,16 +1,17 @@
-use floem::prelude::{
-    RwSignal, SignalGet as _, SignalUpdate as _, create_rw_signal,
-};
+use floem::{prelude::{
+    create_rw_signal, RwSignal, SignalGet as _, SignalUpdate as _
+}, window::WindowId};
 
 #[derive(Debug, Clone)]
 pub struct Editor {
     opened_files: RwSignal<Vec<String>>,
+    pub(super) window_id: WindowId,
 }
 
 impl Editor {
-    pub fn new() -> Self {
+    pub fn new(window_id: WindowId) -> Self {
         let opened_files = create_rw_signal(Vec::new());
-        Self { opened_files }
+        Self { opened_files, window_id }
     }
 
     pub fn open_file(&self, file_name: &str) {
