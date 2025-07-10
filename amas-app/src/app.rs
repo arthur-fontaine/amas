@@ -1,6 +1,6 @@
 use floem::{
     Application, IntoView,
-    views::{Decorators, stack},
+    views::{Decorators, dyn_container, stack},
     window::{WindowConfig, WindowId},
 };
 
@@ -26,5 +26,18 @@ fn app_view(window_id: WindowId) -> impl IntoView {
 
     let layout = WorkspaceLayout::new(graph, editor.clone());
 
-    stack((editor, layout)).style(|s| s.size_full())
+    dyn_container(
+        {
+            let editor = editor.clone();
+            move || editor.get_opened_file()
+        },
+        move |opened_file| {
+            if opened_file.is_some() {
+                editor.clone().into_any()
+            } else {
+                layout.clone().into_any()
+            }
+        },
+    )
+    .style(|s| s.size_full())
 }
