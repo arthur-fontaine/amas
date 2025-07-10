@@ -20,6 +20,14 @@ impl Editor {
         self.opened_files.set(vec![file_name.to_string()]);
     }
 
+    pub fn close_file(&self, file_name: &str) {
+        let mut files = self.opened_files.get();
+        if let Some(pos) = files.iter().position(|f| f == file_name) {
+            files.remove(pos);
+            self.opened_files.set(files);
+        }
+    }
+
     pub fn get_opened_file(&self) -> Option<String> {
         self.opened_files.get().first().cloned()
     }
