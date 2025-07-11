@@ -1,6 +1,7 @@
 use crate::app_temp;
 
 use super::editor::Editor;
+use floem::unit::{DurationUnitExt, UnitExt};
 use floem::{
     AnyView, IntoView,
     event::{Event, EventListener, EventPropagation},
@@ -26,7 +27,23 @@ impl IntoView for Editor {
                             &file_name,
                             Some(LineCol { line: 0, column: 0 }),
                         )
-                        .style(|s| s.size_full())
+                        .style(|s| {
+                            s.size_full()
+                                .scale(100.pct())
+                                .translate_x(0)
+                                .translate_y(0)
+                        })
+                        .animation(move |a| {
+                            a.duration(200.millis())
+                                .keyframe(0, |f| {
+                                    f.computed_style()
+                                        .style(|s| s.scale(0))
+                                        .ease_in()
+                                })
+                                .keyframe(100, |f| f.computed_style().ease_out())
+                                .run_on_create(true)
+                                .only_on_create()
+                        })
                         .on_event(EventListener::PinchGesture, {
                             let editor = editor.clone();
                             move |event| {
